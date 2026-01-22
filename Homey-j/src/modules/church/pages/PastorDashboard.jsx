@@ -1,47 +1,47 @@
-import Card from '../../../shared/ui/Card'
-import Button from '../../../shared/ui/Button'
 
-const kpis = [
-  { label: 'Asistencia', value: '328', caption: 'Domingo anterior', trend: '+4%' },
-  { label: 'Finanzas', value: '$12,430', caption: 'Ingresos mes', trend: '+8%' },
-  { label: 'Nuevos Miembros', value: '18', caption: 'Últimos 30 días', trend: '+2%' },
-  { label: 'Grupos Activos', value: '24', caption: 'En marcha', trend: '—' },
-]
+
+import { useEffect, useState } from 'react'
+import { useParams } from 'react-router-dom'
+import { listMembers } from '../../../core/data/membersService'
 
 function PastorDashboard() {
+  const { churchId } = useParams()
+  const [counts, setCounts] = useState({ miembros: 0, creyentes: 0, visitantes: 0 })
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function fetchCounts() {
+      setLoading(true)
+      const members = await listMembers(churchId)
+      let miembros = 0, creyentes = 0, visitantes = 0
+      for (const m of members) {
+        if (m.role === 'Miembro') miembros++
+        else if (m.role === 'Creyente') creyentes++
+        else if (m.role === 'Visitante') visitantes++
+      }
+      setCounts({ miembros, creyentes, visitantes })
+      setLoading(false)
+    }
+    fetchCounts()
+  }, [churchId])
+
   return (
-    <div className="space-y-8">
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {kpis.map((kpi) => (
-          <Card key={kpi.label} className="bg-white/80 border-gold/30">
-            <p className="text-xs uppercase tracking-[0.2em] text-gold mb-2">{kpi.label}</p>
-            <div className="flex items-baseline gap-2">
-              <span className="text-4xl font-serif text-navy">{kpi.value}</span>
-              <span className="text-sm text-hunter/80">{kpi.trend}</span>
-            </div>
-            <p className="text-sm text-navy/70 mt-1">{kpi.caption}</p>
-          </Card>
-        ))}
-      </section>
-
-      <section>
-        <h3 className="text-xl font-serif text-navy mb-4">Acciones rápidas</h3>
-        <div className="flex flex-wrap gap-3">
-          <Button variant="primary" className="px-5 py-3">Crear nuevo reporte</Button>
-          <Button variant="secondary" className="px-5 py-3">Registrar miembro</Button>
-          <Button variant="ghost" className="px-5 py-3">Ver finanzas</Button>
+    <div className="p-6">
+      <h2 className="text-2xl font-serif mb-4">Dashboard de la iglesia</h2>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div className="bg-white rounded-lg shadow p-6 flex flex-col items-center">
+          <span className="text-3xl font-bold text-hunter">{loading ? '...' : counts.miembros}</span>
+          <span className="text-navy/80 mt-2">Miembros</span>
         </div>
-      </section>
-
-      <section>
-        <Card className="bg-white/75 border-gold/25">
-          <h4 className="text-lg font-serif text-navy mb-2">Próximos pasos</h4>
-          <p className="text-sm text-navy/75">
-            Este dashboard usa datos mock mientras conectamos la API real. Usa el contexto churchId para leer/escribir
-            en Firebase y mostrar estadísticas reales de asistencia, finanzas y membresía.
-          </p>
-        </Card>
-      </section>
+        <div className="bg-white rounded-lg shadow p-6 flex flex-col items-center">
+          <span className="text-3xl font-bold text-navy">{loading ? '...' : counts.creyentes}</span>
+          <span className="text-navy/80 mt-2">Creyentes</span>
+        </div>
+        <div className="bg-white rounded-lg shadow p-6 flex flex-col items-center">
+          <span className="text-3xl font-bold text-gold">{loading ? '...' : counts.visitantes}</span>
+          <span className="text-navy/80 mt-2">Visitantes</span>
+        </div>
+      </div>
     </div>
   )
 }

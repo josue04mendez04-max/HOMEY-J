@@ -31,25 +31,15 @@ export async function listChurches() {
   }
 }
 
-export async function createChurch({ name, pastor }) {
+export async function createChurch({ name, plan = 'Básico' }) {
   const payload = {
     name,
-    pastor,
     isLocked: false,
+    plan,
     createdAt: serverTimestamp(),
   }
-
-  try {
-    const ref = await addDoc(collection(db, COLLECTION), payload)
-    return { id: ref.id, ...payload }
-  } catch (err) {
-    const store = fallbackStore()
-    const current = store.list()
-    const generatedId = crypto.randomUUID()
-    const church = { ...payload, id: generatedId, createdAt: new Date().toISOString() }
-    store.save([...current, church])
-    return church
-  }
+  const ref = await addDoc(collection(db, COLLECTION), payload)
+  return { id: ref.id, ...payload }
 }
 
 export async function toggleLock({ id, isLocked }) {

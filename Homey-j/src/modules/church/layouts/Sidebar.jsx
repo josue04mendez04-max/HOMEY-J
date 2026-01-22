@@ -18,7 +18,7 @@ function Sidebar() {
       <div className="px-5 py-6 border-b border-cream/10">
         <p className="text-xs uppercase tracking-[0.2em] text-gold mb-2">Homey'J</p>
         <h1 className="text-xl font-serif leading-tight">Panel de Iglesia</h1>
-        <p className="text-xs text-cream/70 mt-2">ID: {churchId}</p>
+        <p className="text-xs text-cream/70 mt-2" id="sidebar-church-name"></p>
       </div>
       <nav className="flex-1 py-4">
         <ul className="space-y-1">

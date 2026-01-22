@@ -9,11 +9,11 @@ const firebaseConfig = {
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
-  databaseURL: import.meta.env.VITE_FIREBASE_DATABASE_URL,
 }
 
+// Si no usas Realtime Database, no validamos databaseURL
 const missing = Object.entries(firebaseConfig)
-  .filter(([, value]) => !value)
+  .filter(([key, value]) => !value && key !== 'databaseURL')
   .map(([key]) => key)
 
 if (missing.length) {

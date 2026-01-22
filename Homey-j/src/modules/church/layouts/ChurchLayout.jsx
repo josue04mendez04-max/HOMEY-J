@@ -1,11 +1,25 @@
+
 import { Outlet, useParams } from 'react-router-dom'
+import { useEffect, useState } from 'react'
 import Sidebar from './Sidebar'
 import Topbar from './Topbar'
+import { listChurches } from '../../../core/data/churchesService.js'
 
 function ChurchLayout() {
   const { churchId } = useParams()
-  // TODO: cargar datos reales de la iglesia desde Firestore con churchId.
-  const churchName = `Parroquia ${churchId}`
+  const [churchName, setChurchName] = useState('Iglesia')
+
+  useEffect(() => {
+    async function fetchName() {
+      const churches = await listChurches()
+      const found = churches.find(c => c.id === churchId)
+      setChurchName(found?.name || 'Iglesia')
+      // También actualiza el nombre en el sidebar
+      const sidebarName = document.getElementById('sidebar-church-name')
+      if (sidebarName) sidebarName.textContent = found?.name || 'Iglesia'
+    }
+    fetchName()
+  }, [churchId])
 
   return (
     <div className="min-h-screen bg-cream text-navy flex">

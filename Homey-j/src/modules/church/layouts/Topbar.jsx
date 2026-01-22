@@ -6,7 +6,7 @@ import Card from '../../../shared/ui/Card'
 function Topbar({ churchName }) {
   const { churchId } = useParams()
 
-  const displayName = useMemo(() => churchName || `Iglesia ${churchId}`, [churchName, churchId])
+  const displayName = useMemo(() => churchName || 'Iglesia', [churchName, churchId])
 
   return (
     <header className="flex items-center justify-between px-6 py-4">
