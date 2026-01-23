@@ -5,7 +5,26 @@ import {
   getDocs,
   serverTimestamp,
   updateDoc,
+  deleteDoc,
+  getFirestore,
+  writeBatch,
 } from 'firebase/firestore'
+export async function deleteChurch(id) {
+  // Borrar iglesia en churches_registry
+  await deleteDoc(doc(db, COLLECTION, id))
+  // Borrar toda la data aislada en /churches_data/{id}
+  const churchDataRef = collection(db, `churches_data/${id}/members`)
+  const membersSnap = await getDocs(churchDataRef)
+  const batch = writeBatch(db)
+  membersSnap.forEach(docu => batch.delete(docu.ref))
+  const financesRef = collection(db, `churches_data/${id}/finances`)
+  const financesSnap = await getDocs(financesRef)
+  financesSnap.forEach(docu => batch.delete(docu.ref))
+  const reportsRef = collection(db, `churches_data/${id}/reports`)
+  const reportsSnap = await getDocs(reportsRef)
+  reportsSnap.forEach(docu => batch.delete(docu.ref))
+  await batch.commit()
+}
 import { db } from '../firebase'
 
 const COLLECTION = 'churches_registry'
@@ -31,17 +50,21 @@ export async function listChurches() {
   }
 }
 
-export async function createChurch({ name, plan = 'Básico' }) {
+export async function createChurch({ name, plan = 'Básico', password = '' }) {
   const payload = {
     name,
     isLocked: false,
     plan,
+    password,
     createdAt: serverTimestamp(),
   }
   const ref = await addDoc(collection(db, COLLECTION), payload)
   return { id: ref.id, ...payload }
 }
 
+export async function setChurchPassword(id, password) {
+  await updateDoc(doc(db, COLLECTION, id), { password })
+}
 export async function toggleLock({ id, isLocked }) {
   try {
     await updateDoc(doc(db, COLLECTION, id), { isLocked })

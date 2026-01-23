@@ -105,25 +105,25 @@ function Treasury() {
 
   return (
     <div className="p-6">
-      <div className="flex gap-4 mb-8">
+      <div className="flex flex-wrap gap-3 mb-8">
         <button
-          className={`px-4 py-2 rounded font-semibold transition ${tab === 'corte' ? 'bg-hunter text-cream' : 'bg-hunter/10 text-hunter'}`}
+          className={`flex-1 sm:flex-none min-w-[140px] text-center px-4 py-2 rounded font-semibold transition ${tab === 'corte' ? 'bg-hunter text-cream' : 'bg-hunter/10 text-hunter'}`}
           onClick={() => setTab('corte')}
         >Corte de caja</button>
         <button
-          className={`px-4 py-2 rounded font-semibold transition ${tab === 'contabilidad' ? 'bg-navy text-cream' : 'bg-navy/10 text-navy'}`}
+          className={`flex-1 sm:flex-none min-w-[140px] text-center px-4 py-2 rounded font-semibold transition ${tab === 'contabilidad' ? 'bg-navy text-cream' : 'bg-navy/10 text-navy'}`}
           onClick={() => setTab('contabilidad')}
         >Contabilidad</button>
         <button
-          className={`px-4 py-2 rounded font-semibold transition ${tab === 'historial' ? 'bg-gold text-navy' : 'bg-gold/10 text-gold'}`}
+          className={`flex-1 sm:flex-none min-w-[140px] text-center px-4 py-2 rounded font-semibold transition ${tab === 'historial' ? 'bg-gold text-navy' : 'bg-gold/10 text-gold'}`}
           onClick={() => setTab('historial')}
         >Historial</button>
       </div>
       {tab === 'contabilidad' && (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-10">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 lg:gap-8 mb-10">
         {/* Modal de Ingreso */}
-        <div className="bg-white rounded-xl shadow-lg p-8 w-full max-w-md mx-auto">
+        <div className="bg-white rounded-xl shadow-lg p-8 w-full md:max-w-none mx-auto">
           <h2 className="text-xl font-bold mb-4 text-hunter">Registrar Ingreso</h2>
           <form className="flex flex-col gap-4" onSubmit={handleIncomeSubmit}>
             <input name="cantidad" value={income.cantidad} onChange={handleIncomeChange} type="number" min="0" step="0.01" placeholder="Cantidad" className="border rounded px-3 py-2" required />
@@ -133,7 +133,12 @@ function Treasury() {
             </select>
             <input name="concepto" value={income.concepto} onChange={handleIncomeChange} placeholder="Concepto" className="border rounded px-3 py-2" required />
             <input name="fecha" value={income.fecha} onChange={handleIncomeChange} type="date" className="border rounded px-3 py-2" required />
-            <Combobox value={income.responsable} onChange={val => setIncome(i => ({ ...i, responsable: val }))}>
+            <Combobox value={income.responsable} onChange={val => {
+              setIncome(i => ({ ...i, responsable: val }))
+              // Autorrelleno: buscar el primer miembro exacto
+              const m = incomeOptions.find(opt => opt.name === val) || members.find(mem => mem.name === val)
+              if (m) setIncome(i => ({ ...i, responsable: m.name }))
+            }}>
               <div className="relative">
                 <Combobox.Input
                   className="border rounded px-3 py-2 w-full"
@@ -152,11 +157,14 @@ function Treasury() {
                   {!loadingIncomeNames && incomeOptions.length === 0 && incomeQuery.length >= 2 && (
                     <div className="px-4 py-2 text-navy">Sin resultados</div>
                   )}
-                  {incomeOptions.map(opt => (
-                    <Combobox.Option key={opt.id} value={opt.name} className={({ active }) => `px-4 py-2 cursor-pointer ${active ? 'bg-hunter text-cream' : ''}`}>
-                      {opt.name}
-                    </Combobox.Option>
-                  ))}
+                  {Array.from(new Set(incomeOptions.map(opt => opt.name))).map((name, idx) => {
+                    const opt = incomeOptions.find(o => o.name === name)
+                    return (
+                      <Combobox.Option key={opt.id || name + idx} value={name} className={({ active }) => `px-4 py-2 cursor-pointer ${active ? 'bg-hunter text-cream' : ''}`}>
+                        {name}
+                      </Combobox.Option>
+                    )
+                  })}
                 </Combobox.Options>
               </div>
             </Combobox>
@@ -164,7 +172,7 @@ function Treasury() {
           </form>
         </div>
         {/* Modal de Egreso */}
-        <div className="bg-white rounded-xl shadow-lg p-8 w-full max-w-md mx-auto">
+        <div className="bg-white rounded-xl shadow-lg p-8 w-full md:max-w-none mx-auto">
           <h2 className="text-xl font-bold mb-4 text-navy">Registrar Egreso</h2>
           <form className="flex flex-col gap-4" onSubmit={handleExpenseSubmit}>
             <input name="cantidad" value={expense.cantidad} onChange={handleExpenseChange} type="number" min="0" step="0.01" placeholder="Cantidad" className="border rounded px-3 py-2" required />
@@ -174,7 +182,12 @@ function Treasury() {
             </select>
             <input name="concepto" value={expense.concepto} onChange={handleExpenseChange} placeholder="Concepto" className="border rounded px-3 py-2" required />
             <input name="fecha" value={expense.fecha} onChange={handleExpenseChange} type="date" className="border rounded px-3 py-2" required />
-            <Combobox value={expense.responsable} onChange={val => setExpense(e => ({ ...e, responsable: val }))}>
+            <Combobox value={expense.responsable} onChange={val => {
+              setExpense(e => ({ ...e, responsable: val }))
+              // Autorrelleno: buscar el primer miembro exacto
+              const m = expenseOptions.find(opt => opt.name === val) || members.find(mem => mem.name === val)
+              if (m) setExpense(e => ({ ...e, responsable: m.name }))
+            }}>
               <div className="relative">
                 <Combobox.Input
                   className="border rounded px-3 py-2 w-full"
@@ -193,11 +206,14 @@ function Treasury() {
                   {!loadingExpenseNames && expenseOptions.length === 0 && expenseQuery.length >= 2 && (
                     <div className="px-4 py-2 text-navy">Sin resultados</div>
                   )}
-                  {expenseOptions.map(opt => (
-                    <Combobox.Option key={opt.id} value={opt.name} className={({ active }) => `px-4 py-2 cursor-pointer ${active ? 'bg-navy text-cream' : ''}`}>
-                      {opt.name}
-                    </Combobox.Option>
-                  ))}
+                  {Array.from(new Set(expenseOptions.map(opt => opt.name))).map((name, idx) => {
+                    const opt = expenseOptions.find(o => o.name === name)
+                    return (
+                      <Combobox.Option key={opt.id || name + idx} value={name} className={({ active }) => `px-4 py-2 cursor-pointer ${active ? 'bg-navy text-cream' : ''}`}>
+                        {name}
+                      </Combobox.Option>
+                    )
+                  })}
                 </Combobox.Options>
               </div>
             </Combobox>
@@ -205,37 +221,59 @@ function Treasury() {
           </form>
         </div>
       </div>
-          <div className="bg-white rounded-xl shadow p-6 max-w-3xl mx-auto">
+          <div className="bg-white rounded-xl shadow p-6 max-w-4xl mx-auto">
             <h3 className="text-lg font-bold mb-4">Registros recientes</h3>
             {loading ? (
               <div className="text-navy/60">Cargando...</div>
             ) : records.length === 0 ? (
               <div className="text-navy/60">No hay registros aún.</div>
             ) : (
-              <table className="min-w-full text-sm">
-                <thead>
-                  <tr className="border-b border-navy/10">
-                    <th className="py-2 px-4">ID</th>
-                    <th className="py-2 px-4">Tipo</th>
-                    <th className="py-2 px-4">Cantidad</th>
-                    <th className="py-2 px-4">Concepto</th>
-                    <th className="py-2 px-4">Responsable</th>
-                    <th className="py-2 px-4">Fecha</th>
-                  </tr>
-                </thead>
-                <tbody>
+              <>
+                <div className="hidden md:block overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-navy/10">
+                        <th className="py-2 px-4">ID</th>
+                        <th className="py-2 px-4">Tipo</th>
+                        <th className="py-2 px-4">Cantidad</th>
+                        <th className="py-2 px-4">Concepto</th>
+                        <th className="py-2 px-4">Responsable</th>
+                        <th className="py-2 px-4">Fecha</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {records.map(r => (
+                        <tr key={r.id} className={`border-b border-navy/5 ${r.kind === 'ingreso' ? 'bg-green-50' : r.kind === 'egreso' ? 'bg-red-50' : ''}`}>
+                          <td className="py-2 px-4 font-mono text-xs">{r.id}</td>
+                          <td className="py-2 px-4 capitalize">{r.kind}</td>
+                          <td className="py-2 px-4">{r.cantidad}</td>
+                          <td className="py-2 px-4">{r.concepto}</td>
+                          <td className="py-2 px-4">{r.responsable}</td>
+                          <td className="py-2 px-4">{r.fecha || (r.createdAt && new Date(r.createdAt.seconds * 1000).toLocaleDateString())}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="grid gap-3 md:hidden">
                   {records.map(r => (
-                    <tr key={r.id} className={`border-b border-navy/5 ${r.kind === 'ingreso' ? 'bg-green-50' : r.kind === 'egreso' ? 'bg-red-50' : ''}`}> 
-                      <td className="py-2 px-4 font-mono text-xs">{r.id}</td>
-                      <td className="py-2 px-4 capitalize">{r.kind}</td>
-                      <td className="py-2 px-4">{r.cantidad}</td>
-                      <td className="py-2 px-4">{r.concepto}</td>
-                      <td className="py-2 px-4">{r.responsable}</td>
-                      <td className="py-2 px-4">{r.fecha || (r.createdAt && new Date(r.createdAt.seconds * 1000).toLocaleDateString())}</td>
-                    </tr>
+                    <div key={r.id} className={`rounded-lg border border-navy/10 shadow-sm p-4 ${r.kind === 'ingreso' ? 'bg-green-50/60' : r.kind === 'egreso' ? 'bg-red-50/70' : 'bg-white'}`}>
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-semibold text-navy">{r.concepto}</p>
+                          <p className="text-xs text-navy/70">{r.responsable}</p>
+                        </div>
+                        <span className="text-sm font-bold capitalize text-navy">{r.kind}</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-xs text-navy/80 mt-3">
+                        <span className="font-medium">Cantidad:</span><span>{r.cantidad}</span>
+                        <span className="font-medium">Fecha:</span><span>{r.fecha || (r.createdAt && new Date(r.createdAt.seconds * 1000).toLocaleDateString())}</span>
+                        <span className="font-medium">ID:</span><span className="font-mono">{r.id}</span>
+                      </div>
+                    </div>
                   ))}
-                </tbody>
-              </table>
+                </div>
+              </>
             )}
           </div>
         </>

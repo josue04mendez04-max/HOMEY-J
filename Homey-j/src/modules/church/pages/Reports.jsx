@@ -7,7 +7,7 @@ function Reports() {
   const [reportLink, setReportLink] = useState('')
 
   const handleGenerateLink = () => {
-    setReportLink(window.location.origin + '/reporte-miembros/' + Math.random().toString(36).substring(2, 10))
+    setReportLink(window.location.origin + `/app/${churchId}/reportsmembers`)
   }
 
   return (
@@ -19,13 +19,13 @@ function Reports() {
         Generar link para reportes
       </button>
       {reportLink && (
-        <div className="text-sm text-navy break-all">Link generado: <a href={reportLink} className="underline text-hunter">{reportLink}</a></div>
+        <div className="text-sm text-navy break-all">Link generado: <a href={reportLink} className="underline text-hunter" target="_blank" rel="noopener noreferrer">{reportLink}</a></div>
       )}
       <a
         href={`/app/${churchId}/reportsmembers`}
         className="px-4 py-2 bg-hunter text-cream rounded shadow hover:bg-hunter/80 w-fit"
       >
-        Ver reporte
+        Llenar reporte de miembro
       </a>
     </div>
   )

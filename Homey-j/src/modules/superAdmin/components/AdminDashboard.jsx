@@ -2,7 +2,13 @@ import { useEffect, useState } from 'react'
 import Button from '../../../shared/ui/Button'
 import Card from '../../../shared/ui/Card'
 import Input from '../../../shared/ui/Input'
-import { createChurch, listChurches, toggleLock } from '../../../core/data/churchesService'
+import { createChurch, listChurches, toggleLock, setChurchPassword, deleteChurch } from '../../../core/data/churchesService'
+  const handleDelete = async (id) => {
+    if (window.confirm('¿Seguro que deseas borrar esta iglesia? Esta acción no se puede deshacer.')) {
+      await deleteChurch(id)
+      setChurches(prev => prev.filter(c => c.id !== id))
+    }
+  }
 
 function AdminDashboard({ onLock }) {
   const [churches, setChurches] = useState([])
@@ -136,12 +142,12 @@ function AdminDashboard({ onLock }) {
                     <td className="py-2 pr-4 font-medium flex flex-col gap-1">
                       {church.name}
                       <a
-                        href={`/app/${church.id}`}
+                        href={`/app/${church.id}/dashboard`}
                         className="text-xs text-hunter underline hover:text-hunter/80"
                         target="_blank"
                         rel="noopener noreferrer"
                       >
-                        Ir al panel
+                        Ir al dashboard
                       </a>
                     </td>
                     <td className="py-2 pr-4">{church.pastor}</td>
@@ -170,6 +176,13 @@ function AdminDashboard({ onLock }) {
                           onClick={() => handleToggle(church.id, !church.isLocked)}
                         >
                           {church.isLocked ? 'Desbloquear' : 'Bloquear'}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          className="px-3 py-1 text-sm text-red-700"
+                          onClick={() => handleDelete(church.id)}
+                        >
+                          Borrar
                         </Button>
                       </div>
                     </td>

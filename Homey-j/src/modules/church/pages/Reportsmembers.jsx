@@ -4,6 +4,8 @@ import { listMembers } from '../../../core/data/membersService'
 import { listChurches } from '../../../core/data/churchesService'
 import { Combobox } from '@headlessui/react'
 import { searchMembersByName } from '../../../core/data/membersService'
+import { addReportMember } from '../../../core/data/reportsService'
+import Spinner from '../../../shared/ui/Spinner'
 
 function Reportsmembers() {
   const { churchId } = useParams()
@@ -21,6 +23,7 @@ function Reportsmembers() {
     altar: '',
   })
   const [sent, setSent] = useState(false)
+  const [loading, setLoading] = useState(false)
   const [nameQuery, setNameQuery] = useState('')
   const [nameOptions, setNameOptions] = useState([])
   const [loadingNames, setLoadingNames] = useState(false)
@@ -77,10 +80,16 @@ function Reportsmembers() {
     setForm(f => ({ ...f, [field]: Math.max(0, Number(f[field] || 0) + delta) }))
   }
 
-  const handleSubmit = e => {
+  const handleSubmit = async e => {
     e.preventDefault()
-    setSent(true)
-    saveLocalName(form.name, form.ministry)
+    setLoading(true)
+    try {
+      await addReportMember(churchId, form)
+      setSent(true)
+      saveLocalName(form.name, form.ministry)
+    } finally {
+      setLoading(false)
+    }
   }
 
   const handleAddPerson = () => {
@@ -110,13 +119,19 @@ function Reportsmembers() {
         </h3>
         {sent ? (
           <div className="text-green-700 font-semibold text-lg">¡Reporte enviado correctamente!</div>
+        ) : loading ? (
+          <div className="flex flex-col items-center justify-center py-12">
+            <Spinner size={48} />
+            <span className="mt-4 text-navy/80 font-medium">Enviando reporte...</span>
+          </div>
         ) : (
           <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
             <div>
               <label className="block text-navy font-semibold mb-1">Nombre</label>
               <Combobox value={form.name} onChange={val => {
                 setForm(f => ({ ...f, name: val }))
-                const m = nameOptions.find(opt => opt.name === val)
+                // Buscar solo el primer match exacto por nombre
+                const m = nameOptions.find(opt => opt.name === val) || members.find(mem => mem.name === val)
                 if (m) setForm(f => ({ ...f, ministry: m.ministry || '' }))
               }}>
                 <div className="relative">
@@ -137,11 +152,15 @@ function Reportsmembers() {
                     {!loadingNames && nameOptions.length === 0 && nameQuery.length >= 2 && (
                       <div className="px-4 py-2 text-navy">Sin resultados</div>
                     )}
-                    {nameOptions.map(opt => (
-                      <Combobox.Option key={opt.id} value={opt.name} className={({ active }) => `px-4 py-2 cursor-pointer ${active ? 'bg-hunter text-cream' : ''}`}>
-                        {opt.name}
-                      </Combobox.Option>
-                    ))}
+                    {/* Mostrar solo el primer nombre exacto si hay duplicados */}
+                    {Array.from(new Set(nameOptions.map(opt => opt.name))).map((name, idx) => {
+                      const opt = nameOptions.find(o => o.name === name)
+                      return (
+                        <Combobox.Option key={opt.id || name + idx} value={name} className={({ active }) => `px-4 py-2 cursor-pointer ${active ? 'bg-hunter text-cream' : ''}`}>
+                          {name}
+                        </Combobox.Option>
+                      )
+                    })}
                   </Combobox.Options>
                 </div>
               </Combobox>

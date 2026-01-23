@@ -4,7 +4,7 @@ function Card({ children, className = '' }) {
   return (
     <div
       className={clsx(
-        'rounded-xl bg-white/80 backdrop-blur shadow-[0_20px_60px_-30px_rgba(11,37,69,0.45)] border border-gold/30 px-6 py-6',
+        'rounded-[18px] bg-[#f4f7fb] border border-[#d6dde8] shadow-bank px-6 py-6',
         className,
       )}
     >
