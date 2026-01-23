@@ -1,12 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { listMembers } from '../../../core/data/membersService'
 import { listChurches } from '../../../core/data/churchesService'
 import { listReportMembers } from '../../../core/data/reportsService'
+import { listFinanceRecords } from '../../../core/data/financesService'
 import { Combobox } from '@headlessui/react'
-import { Settings, Lock, Search } from 'lucide-react'
-import { db } from '../../../core/firebase'
-import { doc, updateDoc } from 'firebase/firestore'
+import { Search } from 'lucide-react'
 
 function PanelControl() {
   const { churchId } = useParams()
@@ -14,6 +13,8 @@ function PanelControl() {
   const [loading, setLoading] = useState(true)
   const [reports, setReports] = useState([])
   const [reportsLoading, setReportsLoading] = useState(false)
+  const [offers, setOffers] = useState([])
+  const [offersLoading, setOffersLoading] = useState(false)
   const [filter, setFilter] = useState({ periodo: 'todas', ministerio: 'todos' })
   const [showVidaModal, setShowVidaModal] = useState(false)
   const [miembros, setMiembros] = useState([])
@@ -22,38 +23,17 @@ function PanelControl() {
   const [historial, setHistorial] = useState([])
   const [cumpledorFilter, setCumpledorFilter] = useState('mes') // mes | semana | dia
   const [cumpledores, setCumpledores] = useState([])
-  const [showPassword, setShowPassword] = useState(false)
-  const [passwordInput, setPasswordInput] = useState('')
-  const [passwordError, setPasswordError] = useState('')
+  const [birthdaySector, setBirthdaySector] = useState('todos')
   const [pastorName, setPastorName] = useState('')
-  const [showConfig, setShowConfig] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [passwords, setPasswords] = useState({
-    password_panel: '',
-    password_membership: '',
-    password_leadership: '',
-    password_treasury: '',
-    password_reports: ''
-  })
 
   useEffect(() => {
     async function fetchCounts() {
       setLoading(true)
       const churches = await listChurches()
       const church = churches.find(c => c.id === churchId)
-      if (church && church.password_panel) {
-        setShowPassword(true)
-      }
       if (church && church.pastorName) {
         setPastorName(church.pastorName)
       }
-      setPasswords({
-        password_panel: church?.password_panel || '',
-        password_membership: church?.password_membership || '',
-        password_leadership: church?.password_leadership || '',
-        password_treasury: church?.password_treasury || '',
-        password_reports: church?.password_reports || ''
-      })
       const members = await listMembers(churchId)
       setMiembros(members)
       let miembros = 0, creyentes = 0, visitantes = 0
@@ -73,24 +53,28 @@ function PanelControl() {
     async function fetchReports() {
       setReportsLoading(true)
       let all = await listReportMembers(churchId)
-      {/* Indicadores de miembros, creyentes y visitantes */}
-      {/* Indicadores de miembros, creyentes y visitantes - ahora arriba y fuera de la tabla */}
-      <div className="w-full flex flex-wrap justify-center gap-6 mb-10">
-        <div className="bg-white rounded-lg shadow p-6 flex flex-col items-center min-w-[140px]">
-          <span className="text-3xl font-bold text-hunter">{loading ? '...' : counts.miembros}</span>
-          <span className="text-navy/80 mt-2">Miembros</span>
-        </div>
-        <div className="bg-white rounded-lg shadow p-6 flex flex-col items-center min-w-[140px]">
-          <span className="text-3xl font-bold text-navy">{loading ? '...' : counts.creyentes}</span>
-          <span className="text-navy/80 mt-2">Creyentes</span>
-        </div>
-        <div className="bg-white rounded-lg shadow p-6 flex flex-col items-center min-w-[140px]">
-          <span className="text-3xl font-bold text-gold">{loading ? '...' : counts.visitantes}</span>
-          <span className="text-navy/80 mt-2">Visitantes</span>
-        </div>
-      </div>
       if (filter.ministerio !== 'todos') {
-        all = all.filter(r => r.ministry === filter.ministerio)
+        all = all.filter(r => (r.ministry || '').toLowerCase() === filter.ministerio.toLowerCase())
+      }
+      if (filter.periodo !== 'todas') {
+        const now = new Date()
+        const start = new Date(now)
+        if (filter.periodo === 'semana') {
+          start.setDate(now.getDate() - 7)
+        } else if (filter.periodo === 'mes') {
+          start.setMonth(now.getMonth() - 1)
+        }
+        all = all.filter(r => {
+          if (r.createdAt?.toDate) {
+            const d = r.createdAt.toDate()
+            return d >= start && d <= now
+          }
+          if (r.createdAt?.seconds) {
+            const d = new Date(r.createdAt.seconds * 1000)
+            return d >= start && d <= now
+          }
+          return true
+        })
       }
       setReports(all)
       setReportsLoading(false)
@@ -98,28 +82,41 @@ function PanelControl() {
     fetchReports()
   }, [churchId, filter])
 
+  // Cargar ofrendas desde finanzas
+  useEffect(() => {
+    async function fetchOffers() {
+      setOffersLoading(true)
+      let all = await listFinanceRecords(churchId)
+      all = all.filter(o => (o.kind || '').toLowerCase() === 'ofrenda')
+      setOffers(all)
+      setOffersLoading(false)
+    }
+    fetchOffers()
+  }, [churchId])
+
   // Buscar historial de un miembro
   useEffect(() => {
     if (!selectedMember) return setHistorial([])
     setHistorial(reports.filter(r => r.name === selectedMember.name))
   }, [selectedMember, reports])
 
-  // Calcular cumpleaños próximos
+  // Calcular cumpleaños próximos (global con filtro por sector)
   useEffect(() => {
     if (miembros.length === 0) return
     const now = new Date()
     const currentMonth = now.getMonth()
     const currentDay = now.getDate()
     
-    let filtered = miembros.filter(m => m.birth && typeof m.birth === 'string') // Solo miembros con fecha de nacimiento válida
+    let filtered = miembros.filter(m => m.birth && typeof m.birth === 'string')
+    if (birthdaySector !== 'todos') {
+      filtered = filtered.filter(m => (m.ministry || '').toLowerCase() === birthdaySector.toLowerCase())
+    }
     filtered = filtered.map(m => {
       const parts = m.birth.split('/')
       if (parts.length < 2) return null
       const day = parseInt(parts[0], 10)
       const month = parseInt(parts[1], 10)
       if (!day || !month || day < 1 || day > 31 || month < 1 || month > 12) return null
-      
-      // Crear fecha de próximo cumpleaños (solo considerando mes y día)
       let birthDate = new Date(now.getFullYear(), month - 1, day)
       if (birthDate < now) {
         birthDate = new Date(now.getFullYear() + 1, month - 1, day)
@@ -127,7 +124,6 @@ function PanelControl() {
       return { ...m, proximoCumple: birthDate, birthMonth: month, birthDay: day }
     }).filter(Boolean)
     
-    // Filtrar por período
     if (cumpledorFilter === 'mes') {
       const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0)
       filtered = filtered.filter(m => m.proximoCumple <= endOfMonth)
@@ -139,12 +135,15 @@ function PanelControl() {
       filtered = filtered.filter(m => m.birthMonth === (currentMonth + 1) && m.birthDay === currentDay)
     }
     
-    // Ordenar por fecha próxima
     filtered.sort((a, b) => a.proximoCumple - b.proximoCumple)
     setCumpledores(filtered)
-  }, [miembros, cumpledorFilter])
+  }, [miembros, cumpledorFilter, birthdaySector])
   // Opciones de ministerio únicas
   const ministerios = Array.from(new Set(miembros.map(m => m.ministry).filter(Boolean)))
+  const filteredOffers = useMemo(() => {
+    return offers.filter(o => filter.ministerio === 'todos' ? true : (o.ministry || '').toLowerCase() === filter.ministerio.toLowerCase())
+  }, [offers, filter.ministerio])
+  const offersTotal = useMemo(() => filteredOffers.reduce((sum, o) => sum + Number(o.amount || 0), 0), [filteredOffers])
   // Renderiza el modal de vida espiritual
   function VidaEspiritualModal() {
     return (
@@ -192,128 +191,52 @@ function PanelControl() {
     )
   }
 
-  const handlePasswordSubmit = async (e) => {
-    e.preventDefault()
-    setPasswordError('')
-    const churches = await listChurches()
-    const church = churches.find(c => c.id === churchId)
-    if (church && church.password_panel !== passwordInput) {
-      setPasswordError('Contraseña incorrecta.')
-      return
-    }
-    setShowPassword(false)
-  }
-
-  async function handleSavePasswords(e) {
-    e.preventDefault()
-    setSaving(true)
-    const ref = doc(db, 'churches_registry', churchId)
-    await updateDoc(ref, {
-      password_panel: passwords.password_panel,
-      password_membership: passwords.password_membership,
-      password_leadership: passwords.password_leadership,
-      password_treasury: passwords.password_treasury,
-      password_reports: passwords.password_reports
-    })
-    setSaving(false)
-    setShowConfig(false)
-  }
-
   return (
-    <div className="p-6">
-      {/* Modal de configuración */}
-      {showConfig && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-lg p-8 w-full max-w-lg relative">
-            <button className="absolute top-3 right-3 text-gray-400 hover:text-gray-700" onClick={() => setShowConfig(false)}>&times;</button>
-            <h2 className="text-2xl font-bold mb-4 flex items-center gap-2"><Lock size={22}/> Configuración de contraseñas</h2>
-            <form className="flex flex-col gap-4" onSubmit={handleSavePasswords}>
-              <label className="flex flex-col text-left">
-                Panel de Control
-                <input type="password" className="border rounded px-3 py-2 mt-1" value={passwords.password_panel} onChange={e => setPasswords(p => ({...p, password_panel: e.target.value}))} />
-              </label>
-              <label className="flex flex-col text-left">
-                Membresía
-                <input type="password" className="border rounded px-3 py-2 mt-1" value={passwords.password_membership} onChange={e => setPasswords(p => ({...p, password_membership: e.target.value}))} />
-              </label>
-              <label className="flex flex-col text-left">
-                Liderazgo
-                <input type="password" className="border rounded px-3 py-2 mt-1" value={passwords.password_leadership} onChange={e => setPasswords(p => ({...p, password_leadership: e.target.value}))} />
-              </label>
-              <label className="flex flex-col text-left">
-                Tesorería
-                <input type="password" className="border rounded px-3 py-2 mt-1" value={passwords.password_treasury} onChange={e => setPasswords(p => ({...p, password_treasury: e.target.value}))} />
-              </label>
-              <label className="flex flex-col text-left">
-                Reporte
-                <input type="password" className="border rounded px-3 py-2 mt-1" value={passwords.password_reports} onChange={e => setPasswords(p => ({...p, password_reports: e.target.value}))} />
-              </label>
-              <button type="submit" className="mt-2 px-6 py-2 rounded-full bg-green-500 text-white font-semibold shadow hover:bg-green-600 transition" disabled={saving}>{saving ? 'Guardando...' : 'Guardar'}</button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {showPassword && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-lg p-8 w-full max-w-md">
-            <h2 className="text-2xl font-bold mb-4 text-hunter">Ingresa la contraseña de tu iglesia</h2>
-            <form className="flex flex-col gap-4" onSubmit={handlePasswordSubmit}>
-              <input
-                type="password"
-                value={passwordInput}
-                onChange={e => setPasswordInput(e.target.value)}
-                className="border rounded px-3 py-2"
-                placeholder="Contraseña"
-                required
-              />
-              {passwordError && <p className="text-sm text-red-700">{passwordError}</p>}
-              <button type="submit" className="px-4 py-2 rounded bg-hunter text-cream">Entrar</button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-2xl font-serif">Panel de Control</h2>
-        <button title="Configuración" className="p-2 rounded-full hover:bg-gray-100 transition" onClick={() => setShowConfig(true)}>
-          <Settings size={26} className="text-bank-700" />
-        </button>
+    <div className="min-h-screen bg-[#f8fafc] px-4 sm:px-8 py-8 text-[#0f172a]">
+      <div className="mb-6">
+        <p className="text-xs uppercase tracking-[0.2em] text-[#94a3b8]">Panel de Control</p>
+        <h1 className="text-3xl font-semibold mt-1">Reporte de Actividad Semanal</h1>
+        {pastorName && (
+          <div className="text-lg font-semibold text-bank-700">¡Bienvenido, Pastor {pastorName}!</div>
+        )}
       </div>
-      {pastorName && (
-        <div className="mb-6 text-lg font-semibold text-bank-700">¡Bienvenido, Pastor {pastorName}!</div>
-      )}
 
-      {/* Indicadores de miembros, creyentes y visitantes - ahora arriba y fuera de la tabla */}
-      <div className="w-full flex flex-wrap justify-center gap-6 mb-10">
-        <div className="bg-white rounded-lg shadow p-6 flex flex-col items-center min-w-[140px]">
-          <span className="text-3xl font-bold text-hunter">{loading ? '...' : counts.miembros}</span>
-          <span className="text-navy/80 mt-2">Miembros</span>
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6 fade-in-up">
+        <div className="bg-white rounded-lg shadow p-6 flex flex-col items-center transition-transform duration-200 ease-out hover:-translate-y-0.5 hover:shadow-md">
+          <p className="text-xs text-[#94a3b8]">Miembros</p>
+          <span className="text-2xl font-bold text-hunter">{loading ? '...' : counts.miembros}</span>
         </div>
-        <div className="bg-white rounded-lg shadow p-6 flex flex-col items-center min-w-[140px]">
-          <span className="text-3xl font-bold text-navy">{loading ? '...' : counts.creyentes}</span>
-          <span className="text-navy/80 mt-2">Creyentes</span>
+        <div className="bg-white rounded-lg shadow p-6 flex flex-col items-center transition-transform duration-200 ease-out hover:-translate-y-0.5 hover:shadow-md">
+          <p className="text-xs text-[#94a3b8]">Creyentes</p>
+          <span className="text-2xl font-bold text-navy">{loading ? '...' : counts.creyentes}</span>
         </div>
-        <div className="bg-white rounded-lg shadow p-6 flex flex-col items-center min-w-[140px]">
-          <span className="text-3xl font-bold text-gold">{loading ? '...' : counts.visitantes}</span>
-          <span className="text-navy/80 mt-2">Visitantes</span>
+        <div className="bg-white rounded-lg shadow p-6 flex flex-col items-center transition-transform duration-200 ease-out hover:-translate-y-0.5 hover:shadow-md">
+          <p className="text-xs text-[#94a3b8]">Visitantes</p>
+          <span className="text-2xl font-bold text-gold">{loading ? '...' : counts.visitantes}</span>
+        </div>
+        <div className="bg-white rounded-lg shadow p-6 flex flex-col items-center transition-transform duration-200 ease-out hover:-translate-y-0.5 hover:shadow-md">
+          <p className="text-xs text-[#94a3b8]">Total reportes</p>
+          <span className="text-2xl font-bold text-green-700">{reports.length}</span>
+        </div>
+        <div className="bg-white rounded-lg shadow p-6 flex flex-col items-center transition-transform duration-200 ease-out hover:-translate-y-0.5 hover:shadow-md">
+          <p className="text-xs text-[#94a3b8]">Total ofrendas</p>
+          <span className="text-2xl font-bold text-green-700">{offersLoading ? '...' : offersTotal.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
         </div>
       </div>
 
-      {/* Sección de reportes */}
-      <div className="bg-white rounded-xl shadow p-6 max-w-5xl mx-auto mb-8">
+      <div className="bg-white rounded-xl shadow p-6 max-w-5xl mx-auto mb-8 fade-in-up-delayed">
         <div className="flex flex-wrap gap-2 mb-4 items-center">
           <span className="font-semibold text-navy">Reportes de miembros</span>
-          <select className="border rounded px-2 py-1" value={filter.periodo} onChange={e => setFilter(f => ({...f, periodo: e.target.value}))}>
+          <select className="border border-[#cbd5e1] rounded-lg px-3 py-2 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-[#0ea5e9]/30 focus:border-[#0ea5e9] transition" value={filter.periodo} onChange={e => setFilter(f => ({...f, periodo: e.target.value}))}>
             <option value="todas">Todas las fechas</option>
             <option value="semana">Esta semana</option>
             <option value="mes">Este mes</option>
           </select>
-          <select className="border rounded px-2 py-1" value={filter.ministerio} onChange={e => setFilter(f => ({...f, ministerio: e.target.value}))}>
+          <select className="border border-[#cbd5e1] rounded-lg px-3 py-2 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-[#0ea5e9]/30 focus:border-[#0ea5e9] transition" value={filter.ministerio} onChange={e => setFilter(f => ({...f, ministerio: e.target.value}))}>
             <option value="todos">Todos los ministerios</option>
             {ministerios.map(m => <option key={m} value={m}>{m}</option>)}
           </select>
-          <button className="ml-auto px-4 py-2 rounded bg-hunter text-cream font-semibold hover:bg-hunter/90 flex items-center gap-2" onClick={() => setShowVidaModal(true)}>
+          <button className="ml-auto px-4 py-2 rounded-lg bg-[#0ea5e9] text-white font-semibold shadow-sm hover:shadow-md hover:bg-[#0284c7] transition flex items-center gap-2" onClick={() => setShowVidaModal(true)}>
             <Search size={18}/> Ver Vida Espiritual
           </button>
         </div>
@@ -325,28 +248,28 @@ function PanelControl() {
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
-                <tr className="border-b border-navy/10">
-                  <th className="py-2 px-4">Nombre</th>
-                  <th className="py-2 px-4">Fecha</th>
-                  <th className="py-2 px-4">Ministerio</th>
-                  <th className="py-2 px-4">Capítulos</th>
-                  <th className="py-2 px-4">Horas</th>
-                  <th className="py-2 px-4">Ayunos</th>
-                  <th className="py-2 px-4">Almas</th>
-                  <th className="py-2 px-4">Altar</th>
+                <tr className="border-b border-[#e2e8f0] text-[#94a3b8] bg-[#f8fafc]">
+                  <th className="py-3 px-4 text-left">Nombre</th>
+                  <th className="py-3 px-4 text-left">Fecha</th>
+                  <th className="py-3 px-4 text-left">Ministerio</th>
+                  <th className="py-3 px-4 text-left">Capítulos</th>
+                  <th className="py-3 px-4 text-left">Horas</th>
+                  <th className="py-3 px-4 text-left">Ayunos</th>
+                  <th className="py-3 px-4 text-left">Almas</th>
+                  <th className="py-3 px-4 text-left">Altar</th>
                 </tr>
               </thead>
               <tbody>
                 {reports.map((r, i) => (
-                  <tr key={r.id || i} className="border-b border-navy/5">
-                    <td className="py-2 px-4">{r.name}</td>
-                    <td className="py-2 px-4">{r.createdAt?.seconds ? new Date(r.createdAt.seconds * 1000).toLocaleDateString() : '—'}</td>
-                    <td className="py-2 px-4">{r.ministry}</td>
-                    <td className="py-2 px-4">{r.capitulos}</td>
-                    <td className="py-2 px-4">{r.horas}</td>
-                    <td className="py-2 px-4">{r.ayunos}</td>
-                    <td className="py-2 px-4">{r.almas}</td>
-                    <td className="py-2 px-4">{r.altar}</td>
+                  <tr key={r.id || i} className="border-b border-[#f1f5f9] hover:bg-[#f8fafc] transition duration-150 ease-out">
+                    <td className="py-3 px-4 text-[#0f172a]">{r.name}</td>
+                    <td className="py-3 px-4 text-[#334155]">{r.createdAt?.seconds ? new Date(r.createdAt.seconds * 1000).toLocaleDateString() : '—'}</td>
+                    <td className="py-3 px-4 text-[#334155]">{r.ministry}</td>
+                    <td className="py-3 px-4 text-[#334155]">{r.capitulos}</td>
+                    <td className="py-3 px-4 text-[#334155]">{r.horas}</td>
+                    <td className="py-3 px-4 text-[#334155]">{r.ayunos}</td>
+                    <td className="py-3 px-4 text-[#334155]">{r.almas}</td>
+                    <td className="py-3 px-4 text-[#334155]">{r.altar}</td>
                   </tr>
                 ))}
               </tbody>
@@ -356,10 +279,58 @@ function PanelControl() {
       </div>
       {showVidaModal && <VidaEspiritualModal />}
 
+      {/* Ofrendas globales */}
+      <div className="bg-white rounded-xl shadow p-6 max-w-5xl mx-auto mb-8 fade-in-up">
+        <div className="flex flex-wrap gap-2 mb-4 items-center">
+          <span className="font-semibold text-navy">Ofrendas registradas</span>
+          <span className="text-sm text-[#475569]">Filtra por sector arriba para ver solo un ministerio.</span>
+        </div>
+        {offersLoading ? (
+          <div className="text-navy/60">Cargando ofrendas...</div>
+        ) : filteredOffers.length === 0 ? (
+          <div className="text-navy/60">No hay ofrendas registradas.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-[#e2e8f0] text-[#94a3b8] bg-[#f8fafc]">
+                  <th className="py-3 px-4 text-left">Fecha</th>
+                  <th className="py-3 px-4 text-left">Concepto</th>
+                  <th className="py-3 px-4 text-left">Ministerio</th>
+                  <th className="py-3 px-4 text-left">Monto</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...filteredOffers].sort((a, b) => {
+                  const da = a.createdAt?.seconds ? a.createdAt.seconds : 0
+                  const db = b.createdAt?.seconds ? b.createdAt.seconds : 0
+                  return db - da
+                }).map((o, i) => (
+                  <tr key={o.id || i} className="border-b border-[#f1f5f9] hover:bg-[#f8fafc] transition duration-150 ease-out">
+                    <td className="py-3 px-4 text-[#334155]">{o.createdAt?.seconds ? new Date(o.createdAt.seconds * 1000).toLocaleDateString() : '—'}</td>
+                    <td className="py-3 px-4 text-[#0f172a] font-medium">{o.concept || '—'}</td>
+                    <td className="py-3 px-4 text-[#334155]">{o.ministry || '—'}</td>
+                    <td className="py-3 px-4 text-green-700">${Number(o.amount || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       {/* Widget de cumpleaños */}
       <div className="bg-white rounded-xl shadow p-6 max-w-5xl mx-auto mb-8">
-        <div className="flex flex-wrap gap-2 mb-4 items-center">
+        <div className="flex flex-wrap gap-3 mb-4 items-center">
           <span className="font-semibold text-navy">🎂 Cumpleaños próximos</span>
+          <select
+            className="border border-[#cbd5e1] rounded-lg px-3 py-1 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-[#0ea5e9]/30"
+            value={birthdaySector}
+            onChange={e => setBirthdaySector(e.target.value)}
+          >
+            <option value="todos">Todos los sectores</option>
+            {ministerios.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
           <div className="flex gap-2">
             <button 
               className={`px-3 py-1 rounded text-sm font-medium ${cumpledorFilter === 'mes' ? 'bg-hunter text-cream' : 'bg-hunter/10 text-hunter'}`}

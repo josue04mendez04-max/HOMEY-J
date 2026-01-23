@@ -1,7 +1,7 @@
 
 import { Outlet, useParams, useLocation } from 'react-router-dom'
 import { useEffect, useState } from 'react'
-import Sidebar from './Sidebar'
+// import Sidebar from './Sidebar'
 import Topbar from './Topbar'
 import { listChurches } from '../../../core/data/churchesService.js'
 
@@ -23,21 +23,12 @@ function ChurchLayout() {
     fetchName()
   }, [churchId])
 
-  // Detectar si estamos en cualquier ruta de dashboard
-  const isDashboard = /\/dashboard$/.test(location.pathname)
-
   return (
-    <div className="min-h-screen bg-cream text-navy flex relative">
+    <div className="min-h-screen bg-[#f8fafc] text-navy flex relative">
       {/* Overlay móvil */}
-      {!isDashboard && sidebarOpen && (
-        <div
-          className="fixed inset-0 bg-black/40 z-30 md:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-      {!isDashboard && <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />}
+      {/* Sidebar eliminado */}
       <div className="flex-1 flex flex-col min-h-screen">
-        {!isDashboard && <Topbar churchName={churchName} onOpenSidebar={() => setSidebarOpen(true)} />}
+        <Topbar churchName={churchName} onOpenSidebar={() => setSidebarOpen(true)} />
         <main className="px-4 sm:px-6 pb-10">
           <Outlet />
         </main>

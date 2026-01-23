@@ -16,42 +16,50 @@ function ReportsDashboard() {
   }, [churchId])
 
   return (
-    <div className="p-6 max-w-3xl mx-auto">
-      <h2 className="text-2xl font-bold mb-6 text-navy">Reportes de miembros</h2>
-      {loading ? (
-        <div className="text-navy/60">Cargando...</div>
-      ) : reports.length === 0 ? (
-        <div className="text-navy/60">No hay reportes aún.</div>
-      ) : (
-        <table className="min-w-full text-sm bg-white rounded-xl shadow overflow-hidden">
-          <thead>
-            <tr className="border-b border-navy/10">
-              <th className="py-2 px-4">Nombre</th>
-              <th className="py-2 px-4">Ministerio</th>
-              <th className="py-2 px-4">Capítulos</th>
-              <th className="py-2 px-4">Horas</th>
-              <th className="py-2 px-4">Ayunos</th>
-              <th className="py-2 px-4">Almas</th>
-              <th className="py-2 px-4">Altar</th>
-              <th className="py-2 px-4">Fecha</th>
-            </tr>
-          </thead>
-          <tbody>
-            {reports.map(r => (
-              <tr key={r.id} className="border-b border-navy/5">
-                <td className="py-2 px-4">{r.name}</td>
-                <td className="py-2 px-4">{r.ministry}</td>
-                <td className="py-2 px-4">{r.capitulos}</td>
-                <td className="py-2 px-4">{r.horas}</td>
-                <td className="py-2 px-4">{r.ayunos}</td>
-                <td className="py-2 px-4">{r.almas}</td>
-                <td className="py-2 px-4">{r.altar}</td>
-                <td className="py-2 px-4">{r.createdAt ? new Date(r.createdAt.seconds * 1000).toLocaleDateString() : ''}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+    <div className="min-h-screen bg-[#f8fafc] px-4 sm:px-8 py-8 text-[#0f172a]">
+      <div className="max-w-4xl mx-auto">
+        <div className="mb-6">
+          <p className="text-xs uppercase tracking-[0.2em] text-[#94a3b8]">Reportes</p>
+          <h2 className="text-3xl font-semibold mt-1">Reportes de miembros</h2>
+          <p className="text-sm text-[#475569] mt-1">Resumen de actividad espiritual enviada por los miembros.</p>
+        </div>
+        <div className="bg-white rounded-xl shadow overflow-hidden fade-in-up">
+          {loading ? (
+            <div className="p-6 text-[#94a3b8]">Cargando...</div>
+          ) : reports.length === 0 ? (
+            <div className="p-6 text-[#94a3b8]">No hay reportes aún.</div>
+          ) : (
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-[#e2e8f0] text-[#94a3b8] bg-[#f8fafc]">
+                  <th className="py-3 px-4">Nombre</th>
+                  <th className="py-3 px-4">Ministerio</th>
+                  <th className="py-3 px-4">Capítulos</th>
+                  <th className="py-3 px-4">Horas</th>
+                  <th className="py-3 px-4">Ayunos</th>
+                  <th className="py-3 px-4">Almas</th>
+                  <th className="py-3 px-4">Altar</th>
+                  <th className="py-3 px-4">Fecha</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reports.map(r => (
+                  <tr key={r.id} className="border-b border-[#f1f5f9] hover:bg-[#f8fafc] transition duration-150 ease-out">
+                    <td className="py-3 px-4 text-[#0f172a]">{r.name}</td>
+                    <td className="py-3 px-4 text-[#334155]">{r.ministry}</td>
+                    <td className="py-3 px-4 text-[#334155]">{r.capitulos}</td>
+                    <td className="py-3 px-4 text-[#334155]">{r.horas}</td>
+                    <td className="py-3 px-4 text-[#334155]">{r.ayunos}</td>
+                    <td className="py-3 px-4 text-[#334155]">{r.almas}</td>
+                    <td className="py-3 px-4 text-[#334155]">{r.altar}</td>
+                    <td className="py-3 px-4 text-[#334155]">{r.createdAt ? new Date(r.createdAt.seconds * 1000).toLocaleDateString() : ''}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

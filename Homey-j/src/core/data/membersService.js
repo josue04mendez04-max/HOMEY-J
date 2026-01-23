@@ -1,17 +1,16 @@
 import { collection, addDoc, getDocs, serverTimestamp, doc, updateDoc, query, where } from 'firebase/firestore'
+import { db } from '../firebase'
 
 export async function updateMember(churchId, memberId, data) {
   const ref = doc(db, `churches_data/${churchId}/members/${memberId}`)
-  // No se debe permitir cambiar el nombre
   const { name, ...rest } = data
   const updatePayload = {
     ...rest,
-    ...(typeof name === 'string' ? { nameLower: name.toLowerCase() } : {})
+    ...(typeof name === 'string' ? { name, nameLower: name.toLowerCase() } : {})
   }
   await updateDoc(ref, updatePayload)
   return true
 }
-import { db } from '../firebase'
 
 export async function addMember(churchId, member) {
   const ref = collection(db, `churches_data/${churchId}/members`)

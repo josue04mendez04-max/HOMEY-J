@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useSearchParams } from 'react-router-dom'
 import { listMembers } from '../../../core/data/membersService'
 import { listChurches } from '../../../core/data/churchesService'
 import { Combobox } from '@headlessui/react'
 import { searchMembersByName } from '../../../core/data/membersService'
-import { addReportMember } from '../../../core/data/reportsService'
+import { addReportMember, getReportTemplate } from '../../../core/data/reportsService'
 import Spinner from '../../../shared/ui/Spinner'
 
 function Reportsmembers() {
@@ -27,6 +27,9 @@ function Reportsmembers() {
   const [nameQuery, setNameQuery] = useState('')
   const [nameOptions, setNameOptions] = useState([])
   const [loadingNames, setLoadingNames] = useState(false)
+  const [searchParams] = useSearchParams()
+  const [customFields, setCustomFields] = useState([])
+  const [customValues, setCustomValues] = useState({})
 
   useEffect(() => {
     listMembers(churchId).then(setMembers)
@@ -34,6 +37,18 @@ function Reportsmembers() {
       const found = churches.find(c => c.id === churchId)
       setChurchName(found?.name || 'Iglesia')
     })
+    // Plantilla desde query param
+    const tplParam = searchParams.get('tpl')
+    if (tplParam) {
+      try {
+        const decoded = JSON.parse(atob(tplParam))
+        if (Array.isArray(decoded)) setCustomFields(decoded.filter(Boolean))
+      } catch (e) {
+        console.warn('No se pudo leer la plantilla de campos personalizados')
+      }
+    } else {
+      getReportTemplate(churchId).then(fields => setCustomFields(fields))
+    }
     // Persistencia local
     const saved = localStorage.getItem('homeyj.reportmember')
     if (saved) {
@@ -84,12 +99,16 @@ function Reportsmembers() {
     e.preventDefault()
     setLoading(true)
     try {
-      await addReportMember(churchId, form)
+      await addReportMember(churchId, { ...form, customFields: customValues })
       setSent(true)
       saveLocalName(form.name, form.ministry)
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleCustomChange = (key, value) => {
+    setCustomValues(prev => ({ ...prev, [key]: value }))
   }
 
   const handleAddPerson = () => {
@@ -111,12 +130,15 @@ function Reportsmembers() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-cream">
-      <div className="bg-white rounded-xl shadow-lg p-8 w-full max-w-2xl relative">
-        <h2 className="text-2xl font-bold mb-4 text-center">{churchName}</h2>
-        <h3 className="text-xl font-semibold mb-4 text-center">
-          {form.name ? `¡Hola, ${form.name}!` : 'Reporte de miembros'}
-        </h3>
+    <div className="min-h-screen bg-[#f8fafc] px-4 sm:px-8 py-8 flex items-center justify-center text-[#0f172a]">
+      <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-2xl relative">
+        <div className="text-center mb-4">
+          <p className="text-xs uppercase tracking-[0.2em] text-[#94a3b8]">Reporte semanal</p>
+          <h2 className="text-2xl font-bold mt-1">{churchName}</h2>
+          <h3 className="text-xl font-semibold mt-2">
+            {form.name ? `¡Hola, ${form.name}!` : 'Reporte de miembros'}
+          </h3>
+        </div>
         {sent ? (
           <div className="text-green-700 font-semibold text-lg">¡Reporte enviado correctamente!</div>
         ) : loading ? (
@@ -127,7 +149,7 @@ function Reportsmembers() {
         ) : (
           <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
             <div>
-              <label className="block text-navy font-semibold mb-1">Nombre</label>
+              <label className="block text-[#0f172a] font-semibold mb-1">Nombre</label>
               <Combobox value={form.name} onChange={val => {
                 setForm(f => ({ ...f, name: val }))
                 // Buscar solo el primer match exacto por nombre
@@ -136,27 +158,33 @@ function Reportsmembers() {
               }}>
                 <div className="relative">
                   <Combobox.Input
-                    className="border rounded px-3 py-2 w-full"
+                    className="border border-[#e2e8f0] rounded px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-[#0ea5e9]/40"
                     displayValue={v => v}
                     onChange={e => {
                       setNameQuery(e.target.value)
                       setForm(f => ({ ...f, name: e.target.value }))
                     }}
                     placeholder="Nombre del miembro"
+                    autoComplete="off"
+                    spellCheck="false"
                     required
                   />
                   <Combobox.Options className="absolute z-10 mt-1 w-full bg-white border rounded shadow max-h-60 overflow-auto">
                     {loadingNames && (
-                      <div className="px-4 py-2 text-navy">Buscando...</div>
+                      <div className="px-4 py-2 text-[#475569]">Buscando...</div>
                     )}
                     {!loadingNames && nameOptions.length === 0 && nameQuery.length >= 2 && (
-                      <div className="px-4 py-2 text-navy">Sin resultados</div>
+                      <div className="px-4 py-2 text-[#475569]">Sin resultados</div>
                     )}
                     {/* Mostrar solo el primer nombre exacto si hay duplicados */}
                     {Array.from(new Set(nameOptions.map(opt => opt.name))).map((name, idx) => {
                       const opt = nameOptions.find(o => o.name === name)
                       return (
-                        <Combobox.Option key={opt.id || name + idx} value={name} className={({ active }) => `px-4 py-2 cursor-pointer ${active ? 'bg-hunter text-cream' : ''}`}>
+                        <Combobox.Option
+                          key={opt.id || name + idx}
+                          value={name}
+                          className={({ active }) => `mx-1 mt-1 px-4 py-2 rounded-lg cursor-pointer transition ${active ? 'bg-[#0ea5e9]/10 text-[#0f172a] ring-1 ring-[#0ea5e9]/30' : 'hover:bg-[#f8fafc]'}`}
+                        >
                           {name}
                         </Combobox.Option>
                       )
@@ -166,13 +194,13 @@ function Reportsmembers() {
               </Combobox>
             </div>
             <div>
-              <label className="block text-navy font-semibold mb-1">Ministerio</label>
+              <label className="block text-[#0f172a] font-semibold mb-1">Ministerio</label>
               <input
                 name="ministry"
                 value={form.ministry}
                 onChange={handleChange}
                 list="report-ministries"
-                className="border rounded px-3 py-2 w-full"
+                className="border border-[#e2e8f0] rounded px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-[#0ea5e9]/40"
                 placeholder="Ministerio"
                 required
               />
@@ -184,18 +212,18 @@ function Reportsmembers() {
               <button
                 type="button"
                 onClick={handleAddPerson}
-                className="px-4 py-2 bg-navy text-cream rounded shadow hover:bg-navy/80 font-semibold mb-2"
+                className="px-4 py-2 bg-[#0f172a] text-white rounded-lg shadow-md hover:shadow-lg hover:bg-black font-semibold mb-2 transition"
               >
                 Agregar Persona / Hacer Reporte de otra persona
               </button>
               {showNameSelector && (
                 <div className="bg-white border rounded shadow p-4 flex flex-col gap-2 z-10">
-                  <div className="font-semibold mb-2 text-navy">Selecciona un nombre usado:</div>
+                  <div className="font-semibold mb-2 text-[#0f172a]">Selecciona un nombre usado:</div>
                   {localNames.map(n => (
                     <button
                       key={n}
                       type="button"
-                      className="px-3 py-1 rounded bg-hunter text-cream hover:bg-hunter/80"
+                      className="px-3 py-1 rounded-lg bg-[#0ea5e9] text-white shadow-sm hover:shadow-md hover:bg-[#0284c7] transition"
                       onClick={() => handleSelectPrevName(n)}
                     >
                       {n}
@@ -203,7 +231,7 @@ function Reportsmembers() {
                   ))}
                   <button
                     type="button"
-                    className="mt-2 px-3 py-1 rounded bg-navy text-cream hover:bg-navy/80"
+                    className="mt-2 px-3 py-1 rounded-lg bg-[#0f172a] text-white shadow-sm hover:shadow-md hover:bg-black transition"
                     onClick={() => {
                       setForm({ name: '', ministry: '', capitulos: 0, horas: 0, ayunos: 0, almas: 0, altar: '' })
                       setShowNameSelector(false)
@@ -247,6 +275,17 @@ function Reportsmembers() {
                   <button type="button" onClick={() => handlePop('almas', 1)} className="px-2 py-1 bg-hunter text-cream rounded-full text-lg">+</button>
                 </div>
               </div>
+              {customFields.map((field, idx) => (
+                <div key={`${field}-${idx}`}>
+                  <label className="block text-navy font-semibold mb-1">{field}</label>
+                  <input
+                    value={customValues[field] || ''}
+                    onChange={e => handleCustomChange(field, e.target.value)}
+                    className="border rounded px-3 py-2 w-full"
+                    placeholder={field}
+                  />
+                </div>
+              ))}
               <div className="md:col-span-2">
                 <label className="block text-navy font-semibold mb-1">Altar Familiar</label>
                 <div className="flex gap-4 mt-1">
@@ -268,7 +307,7 @@ function Reportsmembers() {
               </div>
             </div>
             <div className="flex gap-2 justify-end mt-4">
-              <button type="submit" className="px-4 py-2 rounded bg-hunter text-cream">Enviar reporte</button>
+              <button type="submit" className="px-4 py-2 rounded-lg bg-[#0ea5e9] text-white font-semibold shadow-md hover:shadow-lg hover:bg-[#0284c7] transition">Enviar reporte</button>
             </div>
           </form>
         )}
