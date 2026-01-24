@@ -1,3 +1,8 @@
+import { deleteDoc } from 'firebase/firestore'
+export async function deleteTransaction(churchId, transactionId) {
+  const ref = doc(db, `churches_data/${churchId}/finances/${transactionId}`)
+  await deleteDoc(ref)
+}
 
 import { doc, updateDoc } from 'firebase/firestore'
 

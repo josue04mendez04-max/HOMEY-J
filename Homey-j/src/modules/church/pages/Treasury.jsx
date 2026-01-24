@@ -1,16 +1,25 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { Combobox } from '@headlessui/react'
-import { addTransaction, listFinanceRecords, updateTransaction } from '../../../core/data/financesService'
+import { addTransaction, listFinanceRecords, updateTransaction, deleteTransaction } from '../../../core/data/financesService'
 import { listMembers, searchMembersByName } from '../../../core/data/membersService'
 import { listWallets, createWallet, updateWallet, deleteWallet } from '../../../core/data/walletsService'
 import { listFinanceConcepts, createFinanceConcept, updateFinanceConcept } from '../../../core/data/financeConceptsService'
 import { processDailyCut, commitCut } from '../../../core/data/financeEngine'
+import { saveCutReceipt } from '../../../core/data/cutsHistoryService'
+import { listCutReceipts } from '../../../core/data/cutsHistoryService'
+import { generateCutReceiptPDF } from '../../../shared/utils/generateCutReceiptPDF'
 import { listDistributionRules, createDistributionRule, deleteDistributionRule } from '../../../core/data/distributionRulesService'
 import EditWalletModal from './EditWalletModal'
 import EditConceptModal from './EditConceptModal'
 
 function Treasury() {
+      const [searchName, setSearchName] = useState('')
+      const [searchStart, setSearchStart] = useState('')
+      const [searchEnd, setSearchEnd] = useState('')
+      const [filteredMovements, setFilteredMovements] = useState([])
+    const [cutsHistory, setCutsHistory] = useState([])
+    const [loadingCutsHistory, setLoadingCutsHistory] = useState(false)
   const { churchId } = useParams()
   const effectiveChurchId = churchId || 'demo'
   const today = new Date().toISOString().slice(0, 10)
@@ -32,7 +41,10 @@ function Treasury() {
   const [cutDate, setCutDate] = useState(today)
   const [cutPreview, setCutPreview] = useState(null)
   const [loadingCut, setLoadingCut] = useState(false)
+  const [applyRules, setApplyRules] = useState(true)
   const [cutReceipt, setCutReceipt] = useState(null)
+  const [lastCutDate, setLastCutDate] = useState('')
+  const [subtractTransfers, setSubtractTransfers] = useState(false)
 
   const [newWallet, setNewWallet] = useState({ name: '', type: 'CASH', is_default: false, balance: 0 })
   const [editWallet, setEditWallet] = useState(null)
@@ -42,6 +54,72 @@ function Treasury() {
 
   const [incomeQuery, setIncomeQuery] = useState('')
   const [incomeOptions, setIncomeOptions] = useState([])
+
+  // Generar PDF automáticamente cuando se genera el recibo
+  useEffect(() => {
+    if (cutReceipt && cutReceipt.movimientos && cutReceipt.movimientos.length > 0) {
+      generateCutReceiptPDF({
+        churchName: 'Nombre de la Iglesia', // Puedes obtenerlo dinámicamente si lo tienes
+        date: cutReceipt.date,
+        totalIngreso: cutReceipt.total,
+        totalEgreso: 0, // Si tienes egresos, pásalos aquí
+        movimientos: cutReceipt.movimientos,
+        reglas: rules
+      })
+    }
+  }, [cutReceipt, rules])
+
+  // Filtrar movimientos por nombre y fecha
+  useEffect(() => {
+    if (!searchName && !searchStart && !searchEnd) {
+      setFilteredMovements([])
+      return
+    }
+    // Movimientos provenientes de cortes
+    let allMovs = cutsHistory.flatMap(cut =>
+      (cut.movimientos || []).map(m => ({ ...m, fecha: cut.date, fuente: 'corte' }))
+    )
+    // Movimientos individuales (historial completo)
+    const recordMovs = records.map(r => ({
+      ...r,
+      fecha: r.date || (r.createdAt && new Date(r.createdAt.seconds * 1000).toISOString().slice(0, 10)) || '',
+      conceptName: concepts.find(c => c.id === (r.concept_id || r.conceptId))?.name || r.concepto || r.concept_snapshot?.name || '—',
+      fuente: 'movimiento'
+    }))
+    allMovs = allMovs.concat(recordMovs)
+
+    if (searchName) {
+      allMovs = allMovs.filter(m => (m.responsable || '').toLowerCase().includes(searchName.toLowerCase()))
+    }
+    if (searchStart) {
+      allMovs = allMovs.filter(m => m.fecha && m.fecha >= searchStart)
+    }
+    if (searchEnd) {
+      allMovs = allMovs.filter(m => m.fecha && m.fecha <= searchEnd)
+    }
+    setFilteredMovements(allMovs)
+  }, [searchName, searchStart, searchEnd, cutsHistory, records, concepts])
+
+  // Cargar historial de cortes al entrar a la pestaña historial
+  useEffect(() => {
+    if (tab === 'historial') {
+      setLoadingCutsHistory(true)
+      listCutReceipts(effectiveChurchId).then(data => {
+        setCutsHistory(data)
+        setLoadingCutsHistory(false)
+        const latest = data[0]?.date || ''
+        if (latest) setLastCutDate(latest)
+      })
+    }
+  }, [tab, effectiveChurchId])
+
+  // Cargar la última fecha de corte también al iniciar para filtrar recientes
+  useEffect(() => {
+    listCutReceipts(effectiveChurchId).then(data => {
+      const latest = data[0]?.date || ''
+      if (latest) setLastCutDate(latest)
+    })
+  }, [effectiveChurchId])
 
   const normalizeWallet = (w) => ({
     ...w,
@@ -109,7 +187,7 @@ function Treasury() {
   const handleCalculateCut = async () => {
     setLoadingCut(true)
     try {
-      const result = await processDailyCut(effectiveChurchId, cutDate)
+      const result = await processDailyCut(effectiveChurchId, cutDate, applyRules)
       setCutPreview(result)
     } catch (error) {
       console.error('Error calculando el corte', error)
@@ -123,13 +201,17 @@ function Treasury() {
     if (!window.confirm('¿Confirmar distribución y generar movimientos?')) return
     setLoadingCut(true)
     const results = await commitCut(effectiveChurchId, cutPreview.distribucion_sugerida, cutDate)
-    setCutReceipt({
+    const recibo = {
       date: cutDate,
       total: cutPreview.total_ingresado,
+      transfer_total: cutPreview.transfer_total || 0,
+      total_balance: cutPreview.total_ingresado - (subtractTransfers ? cutPreview.transfer_total || 0 : 0),
       distribucion: cutPreview.distribucion_sugerida,
-      resumen: cutPreview.resumen_por_tipo,
+      resumen: cutPreview.resumen_por_concepto,
       movimientos: results
-    })
+    }
+    await saveCutReceipt(effectiveChurchId, recibo)
+    setCutReceipt(recibo)
     setCutPreview(null)
     setTab('historial')
     await refreshAllData()
@@ -185,11 +267,15 @@ function Treasury() {
       return
     }
 
+    const concept = concepts.find(c => c.id === newRule.concept_id)
+    const applies_to_behavior = concept?.system_behavior || 'GENERAL_INCOME'
+
     await createDistributionRule(effectiveChurchId, {
       ...newRule,
       target_wallet_id: newRule.is_outflow ? null : newRule.target_wallet_id,
       outflow_concept_label: newRule.outflow_concept_label?.trim() || null,
-      percentage: Number(newRule.percentage || 0)
+      percentage: Number(newRule.percentage || 0),
+      applies_to_behavior
     })
     setNewRule({ concept_id: '', target_wallet_id: '', percentage: 10, is_remainder: false, is_outflow: false, outflow_concept_label: '' })
     refreshAllData()
@@ -209,6 +295,7 @@ function Treasury() {
       ...income,
       kind: 'ingreso',
       amount: Number(income.amount || 0),
+      responsable: '',
       responsableId: income.responsableId,
       churchId: effectiveChurchId,
       wallet_snapshot: wallet ? { id: wallet.id, name: walletLabel(wallet), type: wallet.type, typeLabel: wallet.typeLabel } : null,
@@ -226,6 +313,7 @@ function Treasury() {
       ...expense,
       kind: 'egreso',
       amount: Number(expense.amount || 0),
+      responsable: '',
       responsableId: expense.responsableId,
       churchId: effectiveChurchId,
       wallet_snapshot: wallet ? { id: wallet.id, name: walletLabel(wallet), type: wallet.type, typeLabel: wallet.typeLabel } : null,
@@ -469,6 +557,13 @@ function Treasury() {
                               </div>
                             )}
                           </div>
+                          <label className="flex items-center gap-2 text-xs mr-2">
+                            <input type="checkbox" checked={rule.enabled !== false} onChange={async e => {
+                              await updateDistributionRule(effectiveChurchId, rule.id, { ...rule, enabled: e.target.checked })
+                              refreshAllData()
+                            }} />
+                            <span>{rule.enabled !== false ? 'Activa' : 'Desactivada'}</span>
+                          </label>
                           <button onClick={() => handleDeleteRule(rule.id)} className="text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition px-2" title="Eliminar regla">🗑</button>
                         </div>
                       )
@@ -495,6 +590,14 @@ function Treasury() {
               <label className="block text-xs font-bold text-gray-500 mb-1">Fecha del Corte</label>
               <input type="date" value={cutDate} onChange={e => setCutDate(e.target.value)} className="border rounded px-4 py-2 text-lg font-medium text-[#0f172a] shadow-sm" />
             </div>
+            <label className="flex items-center gap-2 text-sm text-gray-700 bg-white px-3 py-2 rounded border border-gray-200">
+              <input type="checkbox" checked={applyRules} onChange={e => setApplyRules(e.target.checked)} />
+              <span>Aplicar reglas (recomendado)</span>
+            </label>
+            <label className="flex items-center gap-2 text-sm text-gray-700 bg-white px-3 py-2 rounded border border-gray-200">
+              <input type="checkbox" checked={subtractTransfers} onChange={e => setSubtractTransfers(e.target.checked)} />
+              <span>Restar transferencias bancarias</span>
+            </label>
             <button onClick={handleCalculateCut} disabled={loadingCut} className="bg-[#0f172a] hover:bg-slate-800 text-white px-8 py-3 rounded-lg font-bold shadow-lg transition transform hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed border border-slate-300">
               {loadingCut ? 'Calculando...' : 'Calcular Distribución'}
             </button>
@@ -506,7 +609,56 @@ function Treasury() {
 
               <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-6">
                 <p className="text-sm text-yellow-800"><strong>Total Ingresado: </strong><span className="text-lg font-bold">${cutPreview.total_ingresado?.toFixed(2)}</span></p>
+                {cutPreview.transfer_total ? (
+                  <p className="text-xs text-gray-600 mt-1">Transferencias bancarias detectadas: ${cutPreview.transfer_total.toFixed(2)}</p>
+                ) : null}
+                <p className="text-sm text-yellow-800 mt-1"><strong>Total para balance: </strong><span className="text-lg font-bold">${(cutPreview.total_ingresado - (subtractTransfers ? (cutPreview.transfer_total || 0) : 0)).toFixed(2)}</span></p>
               </div>
+
+              {/* Mostrar operaciones separadas por concepto y reglas aplicadas, usando resumen_por_concepto */}
+              {cutPreview.resumen_por_concepto?.map((r, idx) => {
+                // Reglas para este concepto
+                const conceptRules = rules.filter(rule => rule.concept_id === r.conceptId)
+                // Movimientos para este concepto
+                const detalles = r.detalles || []
+                return (
+                  <div key={idx} className="mb-8 border rounded-lg p-4 bg-gray-50">
+                    <h4 className="text-lg font-bold text-blue-700 mb-2">{r.label}</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-2">
+                      <div>
+                        <p className="text-xs font-bold text-gray-500 mb-2">Reglas que se aplicarán</p>
+                        <ul className="text-sm space-y-1">
+                          {conceptRules.length > 0 ? conceptRules.map((rule, i) => (
+                            <li key={i} className="flex flex-col gap-1 text-gray-700">
+                              <div className="flex items-center justify-between">
+                                <span>
+                                  <span className="font-bold text-blue-700 mr-2">{rule.name || 'Regla'}</span>
+                                  {rule.percentage}% ➜ {rule.is_outflow ? (rule.outflow_concept_label || 'Salida') : walletLabel(wallets.find(w => w.id === rule.target_wallet_id))}
+                                </span>
+                                <span className={`text-xs px-2 py-1 rounded ${rule.enabled !== false ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'}`}>{rule.enabled !== false ? 'Activa' : 'Desactivada'}</span>
+                              </div>
+                            </li>
+                          )) : <li className="text-gray-400">Sin reglas para este concepto</li>}
+                        </ul>
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold text-gray-500 mb-2">Movimientos encontrados</p>
+                        <ul className="text-sm space-y-1">
+                          {detalles.length > 0 ? detalles.map((d, i) => (
+                            <li key={i} className="flex justify-between text-gray-700">
+                              <span>
+                                {d.responsable ? <span className="font-bold text-blue-800 mr-1">{d.responsable}</span> : <span className="font-bold text-gray-400 mr-1">Sin nombre</span>}
+                                {d.conceptName ? <span className="text-gray-600">• {d.conceptName}</span> : null}
+                              </span>
+                              <span className="font-semibold">${Number(d.amount).toFixed(2)}</span>
+                            </li>
+                          )) : <li className="text-gray-400">Sin movimientos para este concepto</li>}
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
 
               <div className="overflow-hidden rounded-lg border border-gray-200 mb-8">
                 <table className="min-w-full text-sm">
@@ -519,14 +671,21 @@ function Treasury() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {cutPreview.distribucion_sugerida?.map((item, idx) => (
-                      <tr key={idx} className="hover:bg-gray-50">
-                        <td className="py-3 px-4 font-medium text-gray-700">{item.from_behavior_label}</td>
-                        <td className="py-3 px-4 text-center text-xs">{item.is_remainder ? <span className="bg-orange-100 text-orange-700 px-2 py-1 rounded font-bold">Remanente</span> : `${item.percentage}%`}</td>
-                        <td className="py-3 px-4 text-blue-600 font-medium">{item.target_wallet_name}</td>
-                        <td className="py-3 px-4 text-right font-bold text-green-700">+ ${Number(item.amount).toFixed(2)}</td>
-                      </tr>
-                    ))}
+                    {cutPreview.distribucion_sugerida?.map((item, idx) => {
+                      // Buscar el nombre de la regla aplicada
+                      const rule = rules.find(r => r.concept_id === item.conceptId && ((r.percentage === item.percentage && !item.is_remainder) || (r.is_remainder && item.is_remainder)))
+                      return (
+                        <tr key={idx} className="hover:bg-gray-50">
+                          <td className="py-3 px-4 font-medium text-gray-700">{item.from_concept_label || item.from_behavior_label}</td>
+                          <td className="py-3 px-4 text-center text-xs">
+                            {rule?.name && <span className="font-bold text-blue-700 mr-1">{rule.name}</span>}
+                            {item.is_remainder ? <span className="bg-orange-100 text-orange-700 px-2 py-1 rounded font-bold">Remanente</span> : `${item.percentage}%`}
+                          </td>
+                          <td className="py-3 px-4 text-blue-600 font-medium">{item.target_wallet_name}</td>
+                          <td className="py-3 px-4 text-right font-bold text-green-700">+ ${Number(item.amount).toFixed(2)}</td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -537,7 +696,7 @@ function Treasury() {
         </div>
       )}
 
-      {cutReceipt && (
+      {tab === 'corte' && cutReceipt && (
         <div className="max-w-4xl mx-auto bg-white rounded-xl shadow-lg p-6 mt-6 border border-gray-100 animate-fade-in-up">
           <div className="flex justify-between items-center mb-4">
             <div>
@@ -547,60 +706,82 @@ function Treasury() {
             <div className="text-right">
               <p className="text-sm text-gray-500">Total contabilizado</p>
               <p className="text-2xl font-bold text-green-700">${cutReceipt.total?.toFixed(2)}</p>
+              {cutReceipt.transfer_total ? (
+                <p className="text-xs text-gray-500 mt-1">Transferencias: -${cutReceipt.transfer_total.toFixed(2)}</p>
+              ) : null}
+              <p className="text-sm text-gray-700 mt-1 font-semibold">Balance tras transferencias: ${ (cutReceipt.total_balance ?? cutReceipt.total)?.toFixed(2) }</p>
             </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-            <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-              <p className="text-xs font-bold text-gray-500 mb-2">Reglas aplicadas</p>
-              <ul className="text-sm space-y-1">
-                {cutReceipt.distribucion.map((d, idx) => {
-                  const destWalletName = d.is_outflow ? (d.outflow_concept_label || 'Salida') : (walletLabel(wallets.find(w => w.id === d.target_wallet_id)) || d.target_wallet_name || 'Caja')
-                  return (
-                    <li key={idx} className="flex justify-between text-gray-700">
-                      <span>{d.from_behavior_label} ➜ {destWalletName}</span>
-                      <span className="font-semibold">${Number(d.amount).toFixed(2)}</span>
-                    </li>
-                  )
-                })}
-              </ul>
-            </div>
-            <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-              <p className="text-xs font-bold text-gray-500 mb-2">Resumen por concepto</p>
-              <ul className="text-sm space-y-1">
-                {cutReceipt.resumen.map((r, idx) => (
-                  <li key={idx} className="flex justify-between text-gray-700">
-                    <span>{r.label}</span>
-                    <span className="font-semibold">${Number(r.total).toFixed(2)}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 mb-4">
-            <p className="text-xs font-bold text-gray-500 mb-2">Detalle de ingresos del día</p>
-            <ul className="text-sm space-y-1">
-              {cutReceipt.resumen.flatMap((r) => r.detalles || []).map((d, idx) => (
-                <li key={idx} className="flex justify-between text-gray-700">
-                  <span>{d.conceptName} • {d.responsable || '—'}</span>
-                  <span className="font-semibold">${Number(d.amount).toFixed(2)}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-            <p className="text-xs font-bold text-gray-500 mb-2">Movimientos generados</p>
-            <ul className="text-sm divide-y divide-gray-200">
-              {cutReceipt.movimientos.map((m, idx) => {
-                const walletName = walletLabel(wallets.find(w => w.id === (m.wallet_id || m.walletId)) || m.wallet_snapshot)
-                return (
-                  <li key={idx} className="py-2 flex justify-between text-gray-700">
-                    <span>{m.date || cutReceipt.date} • {walletName} • {m.responsable || 'Corte automático'}</span>
-                    <span className="font-semibold">${Number(m.amount).toFixed(2)}</span>
-                  </li>
-                )
-              })}
-            </ul>
-          </div>
+          <button
+            className="mb-4 bg-blue-700 hover:bg-blue-800 text-white px-4 py-2 rounded font-bold shadow"
+            onClick={() => {
+              generateCutReceiptPDF({
+                churchName: 'Nombre de la Iglesia', // Puedes obtenerlo dinámicamente si lo tienes
+                date: cutReceipt.date,
+                totalIngreso: cutReceipt.total_balance ?? cutReceipt.total,
+                totalEgreso: 0, // Si tienes egresos, pásalos aquí
+                movimientos: cutReceipt.movimientos,
+                reglas: rules
+              })
+            }}
+          >Descargar Recibo PDF</button>
+          {cutReceipt.resumen.map((r, idx) => {
+            // Para cada concepto, mostrar reglas y opción de activar/desactivar
+            const conceptRules = rules.filter(rule => rule.applies_to_behavior === r.behavior)
+            return (
+              <div key={idx} className="mb-6">
+                <h4 className="text-lg font-bold text-blue-700 mb-2">{r.label}</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-2">
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                    <p className="text-xs font-bold text-gray-500 mb-2">Reglas para este concepto</p>
+                    <ul className="text-sm space-y-1">
+                      {conceptRules.map((rule, i) => (
+                        <li key={i} className="flex items-center justify-between text-gray-700">
+                          <span>{rule.percentage}% ➜ {rule.is_outflow ? (rule.outflow_concept_label || 'Salida') : walletLabel(wallets.find(w => w.id === rule.target_wallet_id))}</span>
+                          <label className="flex items-center gap-2 text-xs">
+                            <input type="checkbox" checked={rule.enabled !== false} onChange={async e => {
+                              await updateDistributionRule(effectiveChurchId, rule.id, { ...rule, enabled: e.target.checked })
+                              refreshAllData()
+                            }} />
+                            <span>{rule.enabled !== false ? 'Activa' : 'Desactivada'}</span>
+                          </label>
+                        </li>
+                      ))}
+                      {conceptRules.length === 0 && <li className="text-gray-400">Sin reglas para este concepto</li>}
+                    </ul>
+                  </div>
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                    <p className="text-xs font-bold text-gray-500 mb-2">Detalle de ingresos</p>
+                    <ul className="text-sm space-y-1">
+                      {(r.detalles || []).map((d, i) => (
+                        <li key={i} className="flex justify-between text-gray-700">
+                          <span>
+                            {d.responsable ? <span className="font-bold text-blue-800 mr-1">{d.responsable}</span> : <span className="font-bold text-gray-400 mr-1">Sin nombre</span>}
+                            {d.conceptName ? <span className="text-gray-600">• {d.conceptName}</span> : null}
+                          </span>
+                          <span className="font-semibold">${Number(d.amount).toFixed(2)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                  <p className="text-xs font-bold text-gray-500 mb-2">Movimientos generados</p>
+                  <ul className="text-sm divide-y divide-gray-200">
+                    {cutReceipt.movimientos.filter(m => m.source_behavior === r.behavior).map((m, i) => {
+                      const walletName = walletLabel(wallets.find(w => w.id === (m.wallet_id || m.walletId)) || m.wallet_snapshot)
+                      return (
+                        <li key={i} className="py-2 flex justify-between text-gray-700">
+                          <span>{m.date || cutReceipt.date} • {walletName} • {m.responsable || 'Corte automático'}</span>
+                          <span className="font-semibold">${Number(m.amount).toFixed(2)}</span>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              </div>
+            )
+          })}
         </div>
       )}
 
@@ -612,7 +793,7 @@ function Treasury() {
               <form onSubmit={handleIncomeSubmit} className="flex flex-col gap-4">
                 <div className="grid grid-cols-2 gap-4">
                   <input name="amount" value={income.amount} onChange={e => setIncome({ ...income, amount: e.target.value })} type="number" placeholder="Monto" className="border rounded px-3 py-2" required />
-                  <input type="date" value={income.date} onChange={e => setIncome({ ...income, date: e.target.value })} className="border rounded px-3 py-2" />
+                  <input type="date" value={income.date} onChange={e => setIncome({ ...income, date: e.target.value })} className="border rounded px-3 py-2" required />
                 </div>
                 <label className="text-xs font-bold text-gray-500 mb-1 block">Caja (opciones: nuestras cajas guardadas)</label>
                 <select value={income.walletId} onChange={e => setIncome({ ...income, walletId: e.target.value })} className="border rounded px-3 py-2 w-full" required>
@@ -663,7 +844,7 @@ function Treasury() {
               <form onSubmit={handleExpenseSubmit} className="flex flex-col gap-4">
                 <div className="grid grid-cols-2 gap-4">
                   <input name="amount" value={expense.amount} onChange={e => setExpense({ ...expense, amount: e.target.value })} type="number" placeholder="Monto" className="border rounded px-3 py-2" required />
-                  <input type="date" value={expense.date} onChange={e => setExpense({ ...expense, date: e.target.value })} className="border rounded px-3 py-2" />
+                  <input type="date" value={expense.date} onChange={e => setExpense({ ...expense, date: e.target.value })} className="border rounded px-3 py-2" required />
                 </div>
                 <label className="text-xs font-bold text-gray-500 mb-1 block">Caja (opciones: nuestras cajas guardadas)</label>
                 <select value={expense.walletId} onChange={e => setExpense({ ...expense, walletId: e.target.value })} className="border rounded px-3 py-2 w-full" required>
@@ -719,11 +900,19 @@ function Treasury() {
                     <th className="py-3 px-4 text-left text-gray-500">Fecha</th>
                     <th className="py-3 px-4 text-left text-gray-500">Concepto</th>
                     <th className="py-3 px-4 text-left text-gray-500">Caja</th>
+                    <th className="py-3 px-4 text-left text-gray-500">Tipo</th>
                     <th className="py-3 px-4 text-right text-gray-500">Monto</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {records.slice(0, 10).map(r => {
+                  {records
+                    .filter(r => {
+                      if (!lastCutDate) return true
+                      const recDate = r.date || (r.createdAt && new Date(r.createdAt.seconds * 1000).toISOString().slice(0, 10))
+                      return !recDate || recDate > lastCutDate
+                    })
+                    .slice(0, 10)
+                    .map(r => {
                     const conceptId = r.concept_id || r.conceptId
                     const walletId = r.wallet_id || r.walletId
                     const conceptName = concepts.find(c => c.id === conceptId)?.name || r.concept_snapshot?.name || r.concepto || '—'
@@ -733,6 +922,13 @@ function Treasury() {
                         <td className="py-3 px-4">{r.date || (r.createdAt && new Date(r.createdAt.seconds * 1000).toLocaleDateString())}</td>
                         <td className="py-3 px-4 font-medium text-[#0f172a]">{conceptName}<div className="text-xs text-gray-400 font-normal">{r.responsable}</div></td>
                         <td className="py-3 px-4 text-gray-600">{walletName}</td>
+                        <td className="py-3 px-4 text-gray-600">
+                          {r.transactionType === 'BANCARIA' ? (
+                            <span className="inline-block bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full text-xs font-semibold">Transferencia</span>
+                          ) : (
+                            <span className="inline-block bg-green-100 text-green-700 px-2 py-0.5 rounded-full text-xs font-semibold">Efectivo</span>
+                          )}
+                        </td>
                         <td className={`py-3 px-4 text-right font-bold ${r.kind === 'ingreso' ? 'text-green-600' : 'text-red-600'}`}>{r.kind === 'ingreso' ? '+' : '-'} ${r.amount || r.cantidad}</td>
                         <td className="py-3 px-4 text-right">
                           <button className="text-xs text-blue-600 underline" onClick={() => setEditMovement({ ...r, wallet_id: walletId, concept_id: conceptId })}>Editar</button>
@@ -740,6 +936,17 @@ function Treasury() {
                       </tr>
                     )
                   })}
+                  {records.filter(r => {
+                    if (!lastCutDate) return true
+                    const recDate = r.date || (r.createdAt && new Date(r.createdAt.seconds * 1000).toISOString().slice(0, 10))
+                    return !recDate || recDate > lastCutDate
+                  }).length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="py-4 text-center text-gray-400">
+                        Sin movimientos desde el último corte. Registra nuevos ingresos/egresos.
+                      </td>
+                    </tr>
+                  )}
                       {/* Modal para editar movimiento */}
                       {editMovement && (
                         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
@@ -780,7 +987,19 @@ function Treasury() {
                                 ))}
                               </select>
                               <input value={editMovement.responsable} onChange={e => setEditMovement({ ...editMovement, responsable: e.target.value })} className="border rounded px-3 py-2" placeholder="Responsable" />
-                              <button type="submit" className="bg-blue-700 hover:bg-blue-800 text-white py-3 rounded-lg font-bold shadow mt-2">Guardar Cambios</button>
+                              <div className="flex gap-2 mt-2">
+                                <button type="submit" className="bg-blue-700 hover:bg-blue-800 text-white py-3 rounded-lg font-bold shadow">Guardar Cambios</button>
+                                <button type="button" className="bg-red-600 hover:bg-red-700 text-white py-3 rounded-lg font-bold shadow" onClick={async () => {
+                                  if (window.confirm('¿Eliminar este movimiento? Esta acción no se puede deshacer.')) {
+                                    await deleteTransaction(effectiveChurchId, editMovement.id)
+                                    setEditMovement(null)
+                                    refreshAllData()
+                                    setTimeout(() => {
+                                      alert('Movimiento eliminado correctamente.')
+                                    }, 100)
+                                  }
+                                }}>Eliminar</button>
+                              </div>
                             </form>
                           </div>
                         </div>
@@ -794,29 +1013,75 @@ function Treasury() {
 
       {tab === 'historial' && (
         <div className="bg-white rounded-xl shadow-lg p-6 animate-fade-in-up">
-          <h3 className="text-lg font-bold mb-4 text-[#0f172a]">Últimos Movimientos</h3>
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-gray-50 border-b">
-                <tr>
-                  <th className="py-3 px-4 text-left text-gray-500">Fecha</th>
-                  <th className="py-3 px-4 text-left text-gray-500">Concepto</th>
-                  <th className="py-3 px-4 text-left text-gray-500">Caja</th>
-                  <th className="py-3 px-4 text-right text-gray-500">Monto</th>
-                </tr>
-              </thead>
-              <tbody>
-                {records.map(r => (
-                  <tr key={r.id} className="border-b hover:bg-gray-50">
-                    <td className="py-3 px-4">{r.date || (r.createdAt && new Date(r.createdAt.seconds * 1000).toLocaleDateString())}</td>
-                    <td className="py-3 px-4 font-medium text-[#0f172a]">{concepts.find(c => c.id === r.concept_id)?.name || r.concepto || '—'}<div className="text-xs text-gray-400 font-normal">{r.responsable}</div></td>
-                    <td className="py-3 px-4 text-gray-600">{wallets.find(w => w.id === r.wallet_id)?.name}</td>
-                    <td className={`py-3 px-4 text-right font-bold ${r.kind === 'ingreso' ? 'text-green-600' : 'text-red-600'}`}>{r.kind === 'ingreso' ? '+' : '-'} ${r.amount || r.cantidad}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <h3 className="text-lg font-bold mb-4 text-[#0f172a]">Historial de Cortes de Caja</h3>
+          <div className="mb-4 flex flex-wrap gap-2 items-end">
+            <input
+              type="text"
+              placeholder="Buscar por nombre de miembro..."
+              value={searchName}
+              onChange={e => setSearchName(e.target.value)}
+              className="border rounded px-3 py-2 text-sm"
+            />
+            <label className="text-xs text-gray-500">Desde
+              <input type="date" value={searchStart} onChange={e => setSearchStart(e.target.value)} className="ml-1 border rounded px-2 py-1 text-sm" />
+            </label>
+            <label className="text-xs text-gray-500">Hasta
+              <input type="date" value={searchEnd} onChange={e => setSearchEnd(e.target.value)} className="ml-1 border rounded px-2 py-1 text-sm" />
+            </label>
           </div>
+          {filteredMovements.length > 0 ? (
+            <div className="overflow-x-auto mb-8">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50 border-b">
+                  <tr>
+                    <th className="py-3 px-4 text-left text-gray-500">Fecha</th>
+                    <th className="py-3 px-4 text-left text-gray-500">Responsable</th>
+                    <th className="py-3 px-4 text-left text-gray-500">Concepto</th>
+                    <th className="py-3 px-4 text-right text-gray-500">Monto</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredMovements.map((m, i) => (
+                    <tr key={i} className="border-b hover:bg-gray-50">
+                      <td className="py-3 px-4">{m.fecha || '—'}</td>
+                      <td className="py-3 px-4">{m.responsable || '—'}</td>
+                      <td className="py-3 px-4">{m.conceptName || m.concepto || '—'}</td>
+                      <td className="py-3 px-4 text-right">${Number(m.amount).toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+          {loadingCutsHistory ? (
+            <div className="text-center text-gray-400 py-8">Cargando historial...</div>
+          ) : filteredMovements.length === 0 && (searchName || searchStart || searchEnd) ? (
+            <div className="text-center text-gray-400 py-8">No se encontraron movimientos con esos filtros.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50 border-b">
+                  <tr>
+                    <th className="py-3 px-4 text-left text-gray-500">Fecha</th>
+                    <th className="py-3 px-4 text-left text-gray-500">Total</th>
+                    <th className="py-3 px-4 text-left text-gray-500">Movimientos</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cutsHistory.map(cut => (
+                    <tr key={cut.id} className="border-b hover:bg-gray-50">
+                      <td className="py-3 px-4 font-medium">{cut.date}</td>
+                      <td className="py-3 px-4">${Number(cut.total).toFixed(2)}</td>
+                      <td className="py-3 px-4">{cut.movimientos?.length || 0}</td>
+                    </tr>
+                  ))}
+                  {cutsHistory.length === 0 && (
+                    <tr><td colSpan={3} className="text-center text-gray-400 py-8">No hay cortes registrados.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
     </div>

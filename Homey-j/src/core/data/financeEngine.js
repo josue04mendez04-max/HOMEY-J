@@ -18,13 +18,14 @@ function sameDay(ts, targetDate) {
 }
 
 // Calcula la distribución sugerida para un corte diario
-export async function processDailyCut(churchId, dateISO) {
-  const [concepts, txs, rules, wallets] = await Promise.all([
+export async function processDailyCut(churchId, dateISO, applyRules = true) {
+  const [concepts, txs, rulesRaw, wallets] = await Promise.all([
     listFinanceConcepts(churchId),
     listFinanceRecords(churchId),
-    listDistributionRules(churchId),
+    applyRules ? listDistributionRules(churchId) : Promise.resolve([]),
     listWallets(churchId)
   ])
+  const rules = applyRules ? rulesRaw.filter(r => r.enabled !== false) : []
   const targetDate = new Date(dateISO)
   const conceptById = Object.fromEntries(concepts.map(c => [c.id, c]))
   const walletById = Object.fromEntries(wallets.map(w => [w.id, w]))
@@ -35,32 +36,42 @@ export async function processDailyCut(churchId, dateISO) {
     return sameDay(t.createdAt, targetDate)
   })
 
-  const byBehavior = {}
-  const detailsByBehavior = {}
+  // Agrupar por concepto individual
+  const byConcept = {}
+  const detailsByConcept = {}
+  let transfer_total = 0
   todays.forEach(t => {
-    const concept = conceptById[t.concept_id || t.conceptId]
-    const behavior = concept?.system_behavior || 'GENERAL_INCOME'
+    const conceptId = t.concept_id || t.conceptId
+    const concept = conceptById[conceptId]
     const amount = Number(t.amount || t.cantidad || 0)
-    byBehavior[behavior] = (byBehavior[behavior] || 0) + amount
-    if (!detailsByBehavior[behavior]) detailsByBehavior[behavior] = []
-    detailsByBehavior[behavior].push({
+    const transactionType = t.transactionType || t.tipoTransaccion || ''
+    if (transactionType === 'BANCARIA') {
+      transfer_total += amount
+    }
+    byConcept[conceptId] = (byConcept[conceptId] || 0) + amount
+    if (!detailsByConcept[conceptId]) detailsByConcept[conceptId] = []
+    detailsByConcept[conceptId].push({
       conceptName: concept?.name || t.concepto || 'Sin concepto',
       amount,
-      responsable: t.responsable || '—'
+      responsable: t.responsable || '—',
+      transactionType
     })
   })
 
-  const total_ingresado = Object.values(byBehavior).reduce((sum, v) => sum + v, 0)
+  const total_ingresado = Object.values(byConcept).reduce((sum, v) => sum + v, 0)
   const distribucion_sugerida = []
 
-  Object.entries(byBehavior).forEach(([behavior, total]) => {
-    const behaviorRules = rules
-      .filter(r => r.applies_to_behavior === behavior)
+  Object.entries(byConcept).forEach(([conceptId, total]) => {
+    const concept = conceptById[conceptId]
+    const behavior = concept?.system_behavior || 'GENERAL_INCOME'
+    // Reglas que aplican a este concepto
+    const conceptRules = rules
+      .filter(r => r.concept_id === conceptId)
       .sort((a, b) => (a.priority || 0) - (b.priority || 0))
 
     let remaining = total
-    const percentageRules = behaviorRules.filter(r => !r.is_remainder)
-    const remainderRules = behaviorRules.filter(r => r.is_remainder)
+    const percentageRules = conceptRules.filter(r => !r.is_remainder)
+    const remainderRules = conceptRules.filter(r => r.is_remainder)
 
     percentageRules.forEach(r => {
       const amount = Math.round((total * Number(r.percentage || 0)) / 100 * 100) / 100
@@ -68,12 +79,13 @@ export async function processDailyCut(churchId, dateISO) {
       const targetWallet = walletById[r.target_wallet_id]
       const target_wallet_name = r.is_outflow ? 'Salida' : targetWallet?.name || 'Caja desconocida'
       distribucion_sugerida.push({
-        from_behavior_label: BEHAVIOR_LABELS[behavior] || behavior,
+        from_concept_label: concept?.name || conceptId,
         target_wallet_name,
         target_wallet_id: r.is_outflow ? null : r.target_wallet_id,
         amount,
         percentage: r.percentage,
         is_remainder: false,
+        conceptId,
         behavior,
         is_outflow: !!r.is_outflow,
         outflow_concept_id: r.outflow_concept_id || null,
@@ -87,12 +99,13 @@ export async function processDailyCut(churchId, dateISO) {
       const targetWallet = walletById[r.target_wallet_id]
       const target_wallet_name = r.is_outflow ? 'Salida' : targetWallet?.name || 'Caja desconocida'
       distribucion_sugerida.push({
-        from_behavior_label: BEHAVIOR_LABELS[behavior] || behavior,
+        from_concept_label: concept?.name || conceptId,
         target_wallet_name,
         target_wallet_id: r.is_outflow ? null : r.target_wallet_id,
         amount,
         percentage: 0,
         is_remainder: true,
+        conceptId,
         behavior,
         is_outflow: !!r.is_outflow,
         outflow_concept_id: r.outflow_concept_id || null,
@@ -100,14 +113,15 @@ export async function processDailyCut(churchId, dateISO) {
       })
     })
 
-    if (behaviorRules.length === 0 && total > 0) {
+    if (conceptRules.length === 0 && total > 0) {
       distribucion_sugerida.push({
-        from_behavior_label: BEHAVIOR_LABELS[behavior] || behavior,
+        from_concept_label: concept?.name || conceptId,
         target_wallet_name: '(Sin regla definida)',
         target_wallet_id: null,
         amount: total,
         percentage: 100,
         is_remainder: false,
+        conceptId,
         behavior
       })
     }
@@ -116,11 +130,13 @@ export async function processDailyCut(churchId, dateISO) {
   return {
     date: dateISO,
     total_ingresado,
-    resumen_por_tipo: Object.entries(byBehavior).map(([k, v]) => ({
-      label: BEHAVIOR_LABELS[k] || k,
-      behavior: k,
+      transfer_total,
+    resumen_por_concepto: Object.entries(byConcept).map(([k, v]) => ({
+      label: conceptById[k]?.name || k,
+      conceptId: k,
+      behavior: conceptById[k]?.system_behavior || 'GENERAL_INCOME',
       total: v,
-      detalles: detailsByBehavior[k] || []
+      detalles: detailsByConcept[k] || []
     })),
     distribucion_sugerida,
     wallets
